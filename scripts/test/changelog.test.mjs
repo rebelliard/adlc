@@ -57,3 +57,29 @@ test('insertEntry seeds a header when the changelog does not exist yet', () => {
   assert.match(out, /^# Changelog/);
   assert.match(out, /## \[1\.0\.0\] - 2026-06-13/);
 });
+
+test('insertEntry keeps an existing [Unreleased] section above the new release, not below it', () => {
+  // Reproduces the real CHANGELOG.md shape: an `## [Unreleased]` heading also
+  // matches `^## \[`, so a naive "insert before the first `## [` heading" put
+  // the new version ABOVE [Unreleased], leaving it sandwiched between the new
+  // and the previous release — breaking reverse-chronological order (AC4).
+  const entry = buildEntry({ version: '1.11.1', date: '2026-09-05', subjects: ['fix: something'] });
+  const base = '# Changelog\n\nintro\n\n## [Unreleased]\n\n## [1.11.0] - 2026-08-24\n\n### Fixed\n- x\n';
+  const out = insertEntry(base, entry, '1.11.1');
+  const unreleasedIdx = out.indexOf('## [Unreleased]');
+  const newIdx = out.indexOf('## [1.11.1]');
+  const oldIdx = out.indexOf('## [1.11.0]');
+  assert.ok(unreleasedIdx < newIdx, '[Unreleased] stays above the new release');
+  assert.ok(newIdx < oldIdx, 'the new release sits above the previous one');
+});
+
+test('insertEntry appends cleanly after [Unreleased] when no released version exists yet', () => {
+  // No `## [` heading follows [Unreleased] here, so the "not found" (-1) path
+  // must be reachable even when an [Unreleased] section IS present — pins the
+  // insertion point against the -1 sentinel getting arithmetic accidentally
+  // applied to it instead of short-circuiting to "append at the end".
+  const entry = buildEntry({ version: '1.0.0', date: '2026-09-07', subjects: ['feat: first release'] });
+  const base = '# Changelog\n\nintro\n\n## [Unreleased]\n';
+  const out = insertEntry(base, entry, '1.0.0');
+  assert.match(out, /^## \[Unreleased\]\s*\n+## \[1\.0\.0\] - 2026-09-07/m, 'entry appended intact directly after an untouched [Unreleased] heading');
+});
