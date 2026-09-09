@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseMain, repinInternalDependencies, packagePublishOrder, findVersionDrift, publishTargets, findPublishMetadataProblems } from '../release.mjs';
+import { releaseMain, repinInternalDependencies, packagePublishOrder, findVersionDrift, publishTargets, findPublishMetadataProblems, defaultIsPublished } from '../release.mjs';
 
 /** Build a throwaway repo with package and Codex-manifest version surfaces. */
 function makeRepo() {
@@ -268,11 +268,92 @@ test('releaseMain --publish invokes publishImpl for plugin packages too', () => 
       root, packagesDir, pluginsDir,
       regenerateLockfile() {},
       publishImpl: (_dir, name) => published.push(name),
+      isPublished: () => false,
     });
     assert.equal(rc, 0);
     assert.ok(published.includes('@adlc/opencode'), `published: ${published}`);
     assert.ok(published.includes('@adlc/core'));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---- resumable publish (v1.11.1's shape: 30/39 published, then a real failure) --
+
+test('releaseMain --publish skips a target isPublished already reports true, without calling publishImpl', () => {
+  const { root, packagesDir, pluginsDir } = makeRepo();
+  try {
+    const published = [];
+    const rc = releaseMain(['1.2.0', '--publish'], {
+      root, packagesDir, pluginsDir,
+      regenerateLockfile() {},
+      publishImpl: (_dir, name) => published.push(name),
+      isPublished: (name) => name === '@adlc/core',
+    });
+    assert.equal(rc, 0);
+    assert.ok(!published.includes('@adlc/core'), 'already-published target must not be re-published');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('releaseMain --publish is resumable: a mid-run failure, then a re-run with the failed target now succeeding, publishes only what was missing', () => {
+  const { root, packagesDir, pluginsDir } = makeRepo();
+  try {
+    mkdirSync(join(pluginsDir, 'adlc-opencode'));
+    writeFileSync(join(pluginsDir, 'adlc-opencode', 'package.json'), JSON.stringify({
+      name: '@adlc/opencode', version: '1.0.0',
+      repository: { type: 'git', url: 'git+https://github.com/voodootikigod/adlc.git' },
+    }, null, 2) + '\n');
+    // First "run": core succeeds, opencode fails (simulating the real v1.11.1
+    // incident — a later target's publish genuinely fails after earlier ones land).
+    const firstRunPublished = [];
+    assert.throws(() => releaseMain(['1.2.0', '--publish'], {
+      root, packagesDir, pluginsDir,
+      regenerateLockfile() {},
+      isPublished: () => false,
+      publishImpl: (_dir, name) => {
+        if (name === '@adlc/opencode') throw new Error('simulated real publish failure');
+        firstRunPublished.push(name);
+      },
+    }));
+    assert.ok(firstRunPublished.includes('@adlc/core'), 'core published before the simulated failure');
+
+    // Re-run: core now reports already-published; opencode does not, and this
+    // time succeeds. Only opencode should actually invoke publishImpl.
+    const secondRunPublished = [];
+    const rc = releaseMain(['1.2.0', '--publish'], {
+      root, packagesDir, pluginsDir,
+      regenerateLockfile() {},
+      isPublished: (name) => firstRunPublished.includes(name),
+      publishImpl: (_dir, name) => secondRunPublished.push(name),
+    });
+    assert.equal(rc, 0);
+    assert.deepEqual(secondRunPublished, ['@adlc/opencode'], 'only the previously-failed target is (re)published');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('defaultIsPublished reflects the real npm registry: true for a version that actually shipped, false for one that never existed', () => {
+  // No network mock here by design — this is the one pair of assertions that
+  // exercises the REAL default end-to-end, against a package guaranteed to
+  // exist (this very suite) with a version guaranteed to (1.0.0, its first
+  // published release) and one guaranteed never to. `--publish` tests
+  // everywhere else inject a fake isPublished specifically so they stay
+  // offline; this is the sole exception, matching the file's own documented
+  // pattern for defaultPublishImpl itself (never invoked in tests, but
+  // present and directly checkable). This positive case is also what pins
+  // the runView call's own 'version' field selector: dropping it would make
+  // npm view return the full package.json dump, which can never equal the
+  // bare version string.
+  assert.equal(defaultIsPublished('@adlc/core', '1.0.0'), true);
+  assert.equal(defaultIsPublished('@adlc/core', '0.0.0-does-not-exist'), false);
+});
+
+test('defaultIsPublished requires BOTH a zero exit AND matching stdout — a status/stdout split (impossible via a real npm view call for one exact version) must read false either way', () => {
+  // npm view for one EXACT version either fully matches or fully fails; it
+  // never returns a zero exit with different content, or a nonzero exit with
+  // the right content. That combination is only reachable by injecting the
+  // subprocess call directly, which is the point: it is what tells an AND
+  // apart from an OR here at all.
+  assert.equal(defaultIsPublished('@adlc/x', '1.2.3', () => ({ status: 0, stdout: 'not-1.2.3\n' })), false);
+  assert.equal(defaultIsPublished('@adlc/x', '1.2.3', () => ({ status: 1, stdout: '1.2.3\n' })), false);
+  assert.equal(defaultIsPublished('@adlc/x', '1.2.3', () => ({ status: 0, stdout: '1.2.3\n' })), true);
 });
 
 test('findPublishMetadataProblems flags a publish target with missing/empty repository.url', () => {
