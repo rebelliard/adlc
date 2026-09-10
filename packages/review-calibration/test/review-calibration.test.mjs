@@ -618,6 +618,153 @@ describe('E2E: echo reviewer is not trusted; default judge fails closed', () => 
     assert.equal(parsed.scorer, 'string');
     assert.ok(parsed.total > 0);
   });
+
+  // #753: this is the exact scenario the issue described — an echoing reviewer
+  // scoring well under `--scorer string`, whose judge is literally `() => true`.
+  // The run still completes and still exits 0 (that mode is documented and the
+  // offline suites depend on it), but the JSON now SAYS the number was measured
+  // with a judge no control could bound, instead of leaving that to a stderr
+  // warning no machine consumer reads.
+  it('--scorer string reports configuredJudgeBounded false in --json', () => {
+    const result = runCli([
+      '--review-cmd', `node ${scriptPath} {base}`,
+      '--commit', 'HEAD', '--plants', '3', '--min-plants', '1', '--min-recall', '0', '--scorer', 'string', '--json',
+    ], dir);
+    assert.notEqual(result.status, 1, `opError: ${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.configuredJudgeBounded, false,
+      'a judge that matches everything must never be reported as bounded');
+    assert.equal(parsed.configuredJudgeEchoRecall, 1,
+      'the echo control scores 1.0 under a judge that matches everything');
+    // The headline number itself: the echoing reviewer really is scored 1.0
+    // here, which is the whole reason the run must declare itself uncertified.
+    // It also pins that the configured judge's verdicts reach the score — a
+    // wrapper that swallowed them would silently drive recall to 0.
+    assert.equal(parsed.recall, 1,
+      'under --scorer string the echoing reviewer catches every plant');
+    assert.equal(parsed.caught, parsed.total);
+  });
+});
+
+// ── the scorer self-test is not decorative: it can and does fire ─────────────
+// referenceJudge accepts a finding whose description contains a content token
+// from the defect text. The echo reviewer's description is "<basename>:<line>
+// changed", so a plant whose defect wording repeats its own filename makes the
+// echoer look like it identified something — the exact non-semantic shortcut
+// the control exists to catch. Before this test the failure branch had no
+// coverage at all, so its wording and its threshold were unverified.
+
+describe('E2E: the scorer control self-test fails closed when the echoer scores', () => {
+  let dir;
+  let plantsDir;
+
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rc-selftest-'));
+    createRepo(dir);
+    // The plants file lives OUTSIDE the repo: the tool refuses to run on a
+    // dirty tree, and an untracked file in the repo is exactly that.
+    plantsDir = mkdtempSync(join(tmpdir(), 'rc-selftest-plants-'));
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(plantsDir, { recursive: true, force: true });
+  });
+
+  it('exits 1 and names the echo control when the echoer scores above the bound', () => {
+    const plantsPath = join(plantsDir, 'plants.json');
+    writeFileSync(plantsPath, JSON.stringify([
+      {
+        file: 'src/math.mjs',
+        line: 6,
+        original: '  return n > 0;',
+        mutated: '  return n >= 0;',
+        category: 'boundary',
+        // "math" is a token of this plant's own filename, so the echoer's
+        // content-free "math.mjs:6 changed" reads as identifying it.
+        defect: 'math boundary off by one',
+      },
+    ]));
+
+    const result = runCli([
+      '--review-cmd', 'node -e "process.stdout.write(\'LGTM\\n\')"',
+      '--commit', 'HEAD', '--plants-file', plantsPath,
+      '--min-plants', '1', '--min-recall', '0', '--scorer', 'string', '--json',
+    ], dir);
+
+    assert.equal(result.status, 1, `expected operational exit 1, got ${result.status}: ${result.stderr}`);
+    assert.match(result.stderr, /scorer self-test FAILED/);
+    assert.match(result.stderr, /echo control scored recall 1\.000/,
+      'the message must report the offending recall to three decimals');
+    assert.match(result.stderr, /must be ~0/,
+      'the message must state the bound the control enforces');
+    assert.match(result.stderr, /non-semantic shortcut/);
+  });
+});
+
+// ── #753: the judge control only bounds a judge that actually judged ──────────
+// A reviewer whose output locates no plant never reaches the judge, so the
+// judge contributed nothing to the recall number and there is nothing for the
+// control to bound. Reporting `null` there (rather than a fabricated verdict)
+// is what keeps the control honest — and what keeps a run from making LLM calls
+// purely to bound an instrument it never used.
+
+describe('E2E: a judge that rendered no verdict is reported as unbounded-unknown', () => {
+  let dir;
+
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rc-nojudge-'));
+    createRepo(dir);
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a SINGLE verdict is still enough to demand the control', () => {
+    // The boundary that matters: one locating finding means the judge did
+    // render a verdict, so the figure depends on it and the control must run.
+    // A floor set one higher would let a single-finding run report itself
+    // unmeasured — the quietest possible version of the original bug.
+    const plantsDir = mkdtempSync(join(tmpdir(), 'rc-onehit-plants-'));
+    try {
+      const plantsPath = join(plantsDir, 'plants.json');
+      writeFileSync(plantsPath, JSON.stringify([
+        {
+          file: 'src/math.mjs', line: 6,
+          original: '  return n > 0;', mutated: '  return n >= 0;',
+          category: 'boundary', defect: 'inclusive bound admits zero',
+        },
+      ]));
+      // Reviewer emits exactly one finding, locating that one plant.
+      const result = runCli([
+        '--review-cmd', 'node -e "process.stdout.write(\'math.mjs:6 boundary is wrong\\n\')"',
+        '--commit', 'HEAD', '--plants-file', plantsPath,
+        '--min-plants', '1', '--min-recall', '0', '--scorer', 'string', '--json',
+      ], dir);
+      assert.notEqual(result.status, 1, `opError: ${result.stderr}`);
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.caught, 1, 'exactly one verdict was rendered');
+      assert.equal(parsed.configuredJudgeBounded, false,
+        'one verdict is enough — the control must have run');
+    } finally {
+      rmSync(plantsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('locates nothing → configuredJudgeBounded is null, run still completes', () => {
+    const result = runCli([
+      '--review-cmd', 'node -e "process.stdout.write(\'LGTM\\n\')"',
+      '--commit', 'HEAD', '--plants', '3', '--min-plants', '1', '--min-recall', '0',
+      '--scorer', 'string', '--json',
+    ], dir);
+    assert.equal(result.status, 0, `expected pass, got ${result.status}: ${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.recall, 0);
+    assert.equal(parsed.configuredJudgeBounded, null,
+      'no verdict rendered → nothing to bound, and the report must not claim otherwise');
+    assert.equal(parsed.configuredJudgeEchoRecall, null);
+  });
 });
 
 describe('E2E: fake review finds nothing → recall 0, gate fails (exit 2)', () => {
