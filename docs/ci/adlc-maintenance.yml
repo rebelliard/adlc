@@ -45,7 +45,18 @@ jobs:
         # scheduled runner with repo access. Bump deliberately after reviewing the
         # release. (`--ignore-scripts` blocks install-time scripts; the CLIs are
         # zero-dependency, so nothing legitimate needs them.)
-        run: npm install -g --ignore-scripts @adlc/cli@1.1.0
+        #
+        # FLOOR: the sharded ticket store shipped in 1.4.0 (use 1.4.1+ — 1.4.0 was
+        # a partial release). The ticket-prune step below runs against a sharded
+        # store, which an earlier CLI cannot load, so this pin must never drop
+        # below that floor.
+        #
+        # NOTE: every published release up to and including 1.11.1 still performs
+        # the scope-existence staleness inference unconditionally, so the step's
+        # stale counts come from the weak signal described in #779. Raise this pin
+        # to the first release that ships the opt-in default, after which the step
+        # reports only explicitly-done tickets unless `--infer-scope` is added.
+        run: npm install -g --ignore-scripts @adlc/cli@1.11.1
 
       # The two checks below are ADVISORY, but a check that *crashes* must not be
       # mistaken for a clean run. Each captures the tool's real exit code, records
@@ -109,13 +120,17 @@ jobs:
             echo "## Stale tickets (ticket-prune)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -f .adlc/tickets.json ]; then
+          # Both backends: the LEGACY flat file, and the canonical SHARDED store
+          # (.adlc/tickets/.store.json plus the shards beside it). Guarding on the
+          # flat file alone made this step a no-op on every sharded repo — which is
+          # every new repo — and print "nothing to prune" having examined nothing.
+          if [ -f .adlc/tickets.json ] || [ -f .adlc/tickets/.store.json ]; then
             # `if` capture so a nonzero exit does not abort the step under `set -e`.
             if out="$(adlc ticket-prune --json)"; then rc=0; else rc=$?; fi
             echo "$out" >> "$GITHUB_STEP_SUMMARY"
           else
             rc=0
-            echo "(.adlc/tickets.json not present — nothing to prune)" >> "$GITHUB_STEP_SUMMARY"
+            echo "(neither .adlc/tickets.json nor .adlc/tickets/.store.json present — nothing to prune)" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           # ticket-prune is a report, not a gate: exit 0 is the only expected

