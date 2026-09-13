@@ -42,16 +42,15 @@ function withTempSpec(contents, fn) {
 }
 
 test('registry exposes the suite tools and omits internal packages', () => {
-  // 31 as of backlog-groom's registration (T-01M2DND1F5N336Q3GKXGSXKWFP) — bump
+  // 30 as of the autopilot's registration (T-01M0Z3FN7SAS4HAH7CS63YQ0DH) — bump
   // deliberately when a tool is intentionally added/removed from the registry.
-  assert.equal(TOOLS.length, 31);
+  assert.equal(TOOLS.length, 30);
   assert.equal(isTool('autopilot'), true);
   assert.equal(isTool('spec-lint'), true);
   assert.equal(isTool('prosecute'), true);
   assert.equal(isTool('ticket'), true);
   assert.equal(isTool('review'), true);
   assert.equal(isTool('ticket-prune'), true);
-  assert.equal(isTool('backlog-groom'), true);
   assert.equal(isTool('build-gate'), true);
   assert.equal(isTool('handoff'), true);
   assert.equal(isTool('fleet'), true);

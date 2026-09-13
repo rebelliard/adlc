@@ -11,6 +11,11 @@ description: Verifies each open issue's premise against the code at HEAD, cluste
 
 A backlog's labels are stamped once at filing and then rot. Nothing re-checks whether an issue is still true, so a mature backlog fills with issues whose premise the code has already outgrown — and lane selection re-derives the same code-grounded analysis every time it picks work. `backlog-groom` verifies each issue's premise against the code at HEAD, clusters issues by the package their verified locations sit in, ranks them from what it learned, and emits a versioned set.
 
+> **Not yet routed through `adlc`.** Registering the verb means editing
+> `packages/cli/lib/registry.mjs`, which is a frozen rail of an in-flight ticket,
+> so the tool is invoked by its own binary for now and the `adlc backlog-groom`
+> verb lands once that rail expires.
+
 This package is the **read path**. The adversarial gate, the autonomy floor and execution live in the write path; proposals are emitted for it rather than applied here.
 
 ## Routes and verdicts

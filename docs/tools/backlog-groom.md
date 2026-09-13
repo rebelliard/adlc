@@ -14,6 +14,11 @@ issue's premise **against the code at HEAD**, clusters issues by the package
 their verified locations sit in, ranks them from what it learned, and emits a
 versioned set.
 
+> **Not yet routed through `adlc`.** Registering the verb means editing
+> `packages/cli/lib/registry.mjs`, which is a frozen rail of an in-flight ticket,
+> so the tool is invoked by its own binary for now and the `adlc backlog-groom`
+> verb lands once that rail expires.
+
 This package is the **read path**: it writes nothing to GitHub. The adversarial
 gate, the autonomy floor and execution are the write path.
 
