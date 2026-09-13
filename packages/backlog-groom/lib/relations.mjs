@@ -30,7 +30,7 @@ export const RELATION_KINDS = Object.freeze(['duplicate-of', 'related-to', 'supe
  * the first N distinct content tokens are ample for it; the full body is still
  * what verification and judgment see.
  */
-export const MAX_TOKENS_PER_ISSUE = 400;
+export const MAX_TOKENS_PER_ISSUE = 400; // pinned: see the test for why the value is deliberate
 
 const STOP = new Set(['the', 'a', 'an', 'is', 'in', 'on', 'of', 'to', 'and', 'or', 'for', 'it', 'that', 'this', 'with', 'when', 'not', 'be', 'are', 'was']);
 
@@ -112,7 +112,7 @@ export function candidatePairs(issues, { threshold = 0.2 } = {}) {
  * judgment, and accepting it would turn the filter back into the evidence the
  * spec forbids.
  */
-function isRealEvidence(evidence, score) {
+function isRealEvidence(evidence) {
   if (typeof evidence !== 'string') return false;
   const text = evidence.trim();
   if (text.length < 12) return false;
@@ -148,7 +148,7 @@ export function emitRelations(pairs, judge) {
       refused.push({ from: p.a.number, to: p.b.number, why: `unknown relation kind ${JSON.stringify(verdict.kind)}` });
       continue;
     }
-    if (!isRealEvidence(verdict.evidence, p.score)) {
+    if (!isRealEvidence(verdict.evidence)) {
       refused.push({ from: p.a.number, to: p.b.number, why: 'evidence absent or merely restates the similarity score' });
       continue;
     }

@@ -69,7 +69,7 @@ test('AC11: a judgment with no evidence beyond similarity is refused', () => {
   assert.deepEqual(bare.relations, [], 'no evidence, no relation');
   assert.ok(bare.refused.length > 0, 'and the refusal is reported, not silent');
 
-  const scoreOnly = emitRelations(pairs, (a, b, score) => ({ kind: 'duplicate-of', evidence: `similarity ${score}` }));
+  const scoreOnly = emitRelations(pairs, (_a, _b, score) => ({ kind: 'duplicate-of', evidence: `similarity ${score}` }));
   assert.deepEqual(scoreOnly.relations, [], 'evidence that merely restates the score is not evidence');
 });
 
@@ -154,6 +154,13 @@ test('AC19: tokens per issue are bounded, so a pasted log cannot dominate the sw
   // is a coarse filter; the full body still reaches verification and judgment.
   const huge = { number: 1, title: 't', body: Array.from({ length: 5000 }, (_, i) => `token${i}`).join(' ') };
   assert.equal(tokens(huge).size, MAX_TOKENS_PER_ISSUE);
+});
+
+test('AC19: the token bound is 400 — low enough to cap a pasted log, high enough to leave real issues whole', () => {
+  // Pinned deliberately. The value is a trade-off an operator can reason about:
+  // raising it lets one enormous issue dominate an O(n^2) sweep, lowering it
+  // starts truncating the vocabulary of ordinary issues and blunts the filter.
+  assert.equal(MAX_TOKENS_PER_ISSUE, 400);
 });
 
 test('AC19: the bound is high enough that ordinary issues are unaffected', () => {
