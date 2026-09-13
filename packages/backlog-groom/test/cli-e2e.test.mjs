@@ -108,3 +108,15 @@ test('a LARGE --json payload survives being piped — no truncation on exit', ()
   assert.equal(parsed.issues.length, 500, 'every issue must survive the pipe');
   assert.equal(parsed.coverage.total, 500);
 });
+
+test('an operational error prints its message alone — no stack trace on top', () => {
+  // The message is the whole of what an operator needs. A stack trace printed
+  // over it is noise they have to read past to find the one line that matters,
+  // and it makes a handled, expected refusal look like a crash.
+  const box = sandbox([]);
+  const r = run(['--threshold', '7'], box);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--threshold must be a number between 0 and 1/);
+  assert.doesNotMatch(r.stderr, /\s+at\s/, 'a handled refusal must not surface a stack');
+  assert.doesNotMatch(r.stderr, /Error:/, 'nor an exception header');
+});
