@@ -9,7 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { groom } from '../lib/groom.mjs';
+import { groom, MAX_TOTAL_REFERENCES } from '../lib/groom.mjs';
+import { renderReport } from '../lib/report.mjs';
 import { parseProfile } from '../lib/profile.mjs';
 
 const PROFILE = parseProfile({ schemaVersion: 1, units: [{ name: 'core', paths: ['packages/core/**'] }] });
@@ -90,4 +91,30 @@ test('an unconsultable fetch short-circuits before any verification', () => {
   const r = groom({ profile: PROFILE, cache: {}, io: w.io });
   assert.equal(r.ok, false);
   assert.equal(w.reads.length, 0);
+});
+
+test('a sweep enforces a GLOBAL citation budget, and says the run was incomplete', () => {
+  // The per-issue cap bounds one hostile body; this bounds the backlog. Without
+  // it, 500 issues at 50 citations each is 25,000 references and roughly three
+  // synchronous git subprocesses apiece — a run that never finishes usefully.
+  const body = '**Location** `packages/core/lib/text.mjs:1`\n\n```\nconst tag = one;\n```\n';
+  const issues = Array.from({ length: MAX_TOTAL_REFERENCES + 50 }, (_, i) => ({
+    number: i + 1, title: 't', body, labels: [], url: 'u', updatedAt: 'T1',
+  }));
+  const reads = [];
+  const io = {
+    fetchIssues: () => ({ issues, unconsultable: null, truncated: null }),
+    readFile: (p) => { reads.push(p); return 'const tag = one;\n'; },
+    pathExists: () => true,
+    lastCommitFor: () => 'abc',
+    everExisted: () => true,
+    headCommit: () => 'rev',
+  };
+  const { set } = groom({ profile: PROFILE, cache: null, io });
+  assert.equal(set.coverage.budgetExhausted, true);
+  assert.match(renderReport(set), /exhausted its citation budget/);
+
+  const beyond = set.issues.at(-1);
+  assert.equal(beyond.verdict, 'unverifiable', 'an issue past the budget is not verified, and says so');
+  assert.notEqual(beyond.verdict, 'fixed', 'and can never close');
 });

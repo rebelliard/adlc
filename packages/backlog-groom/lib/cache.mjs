@@ -31,6 +31,10 @@
 export const CACHE_SCHEMA_VERSION = 2;
 
 /** Unambiguous composite key: length-delimited so two fields cannot alias. */
+/** The only verdicts and routes a cache entry may claim. */
+const VALID_VERDICTS = new Set(['valid', 'fixed', 'moved', 'unverifiable', 'unverified']);
+const VALID_ROUTES = new Set(['mechanical', 'model', 'unverifiable']);
+
 export function cacheKeyFor({ updatedAt, contentHash }) {
   const u = String(updatedAt ?? '');
   const c = contentHash == null ? '' : String(contentHash);
@@ -48,7 +52,17 @@ export function cacheKeyFor({ updatedAt, contentHash }) {
 export function cacheGet(store, key) {
   const entry = store?.[String(key.number)];
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
-  if (typeof entry.verdict !== 'string') return null;
+  // Validated against ENUMS, not merely "is a string". The documented contract
+  // is that a corrupt cache costs a slow run and never a wrong answer, and an
+  // entry claiming `verdict: "fixed!"` or an unknown route is corrupt — it has
+  // to become a miss, or the contract only holds for corruption clumsy enough to
+  // drop the field entirely.
+  if (!VALID_VERDICTS.has(entry.verdict)) return null;
+  if (entry.route !== undefined && !VALID_ROUTES.has(entry.route)) return null;
+  // Evidence, when present, must be an object — a cached string or array would
+  // flow into a close proposal's evidence field unchecked.
+  if (entry.evidence !== undefined && entry.evidence !== null
+      && (typeof entry.evidence !== 'object' || Array.isArray(entry.evidence))) return null;
   if (entry.key !== cacheKeyFor(key)) return null;
   return entry;
 }

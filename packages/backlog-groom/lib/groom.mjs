@@ -25,6 +25,18 @@ import { emitGroomedSet } from './emit.mjs';
 import { globMatch } from './cluster.mjs';
 
 /**
+ * Total citations one sweep will verify.
+ *
+ * The per-issue cap bounds a single hostile body; this bounds the BACKLOG. 500
+ * issues at 50 citations each is 25,000 references and roughly three synchronous
+ * git subprocesses apiece, which is a run that never finishes in any useful
+ * sense. Past the budget, remaining issues are treated as truncated — so they
+ * can never verify `fixed` — and the report says the run was incomplete rather
+ * than presenting a partial sweep as a whole one.
+ */
+export const MAX_TOTAL_REFERENCES = 5000;
+
+/**
  * Run the read pipeline.
  *
  * @param {object} o
@@ -50,8 +62,18 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
     return { ok: false, unconsultable, set: null };
   }
 
+  let referenceBudget = MAX_TOTAL_REFERENCES;
+  let budgetExhausted = false;
+
   const rows = issues.map((issue) => {
     const classified = classifyIssue(issue);
+    if (referenceBudget <= 0 && classified.references.length > 0) {
+      budgetExhausted = true;
+      classified.references = [];
+      classified.referencesTruncated = true;
+    } else {
+      referenceBudget -= classified.references.length;
+    }
     const paths = classified.references.map((r) => r.path);
     const hash = contentHash(paths, readIo);
     const key = { number: issue.number, updatedAt: issue.updatedAt, contentHash: hash };
@@ -90,7 +112,7 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
 
   const set = emitGroomedSet({
     generatedFor: describedCommit,
-    coverage: coverageOf(rows, { truncated }),
+    coverage: { ...coverageOf(rows, { truncated }), budgetExhausted },
     truncated,
     rows,
     clusters,

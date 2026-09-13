@@ -175,3 +175,26 @@ test('AC22: the revision is honoured — an empty tree hashes nothing', () => {
   // a digest.
   assert.equal(contentHash(['package.json'], { revision: '4b825dc642cb6eb9a060e54bf8d69288fbee4904' }), null);
 });
+
+test('AC10: a cache entry claiming an UNKNOWN verdict or route is a miss', () => {
+  // The documented contract is that a corrupt cache costs a slow run and never a
+  // wrong answer. Checking only "is a string" honoured that contract solely for
+  // corruption clumsy enough to drop the field; an entry claiming `fixed!` or an
+  // invented route flowed straight through into a close proposal.
+  const key = { number: 11, updatedAt: 'T1', contentHash: 'h1' };
+  const store = {};
+  cachePut(store, key, { verdict: 'valid', route: 'mechanical' });
+  const goodKey = store['11'].key;
+
+  for (const entry of [
+    { verdict: 'fixed!', route: 'mechanical', key: goodKey },
+    { verdict: 'definitely-fixed', route: 'mechanical', key: goodKey },
+    { verdict: 'fixed', route: 'invented', key: goodKey },
+    { verdict: 'fixed', route: 'mechanical', evidence: 'a string', key: goodKey },
+    { verdict: 'fixed', route: 'mechanical', evidence: [], key: goodKey },
+  ]) {
+    assert.equal(cacheGet({ '11': entry }, key), null, `${JSON.stringify(entry.verdict)} must not be served`);
+  }
+
+  assert.equal(cacheGet(store, key)?.verdict, 'valid', 'a well-formed entry still hits');
+});

@@ -16,7 +16,8 @@
       "unverifiable": 1
     },
     "mechanicalShare": 0.6667,
-    "truncated": null
+    "truncated": null,
+    "budgetExhausted": false
   },
   "truncated": null,
   "issues": [

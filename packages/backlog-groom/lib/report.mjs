@@ -42,6 +42,13 @@ export function renderReport(set) {
       `${c.routes.model} routed to model, ${c.routes.unverifiable} not verifiable ` +
       `(${(c.mechanicalShare * 100).toFixed(1)}% mechanical).`
   );
+  if (c.budgetExhausted) {
+    lines.push('');
+    lines.push(
+      '**This run exhausted its citation budget.** Issues past the budget were not verified at all, ' +
+        'and are reported unverifiable rather than examined — the run is incomplete.'
+    );
+  }
   if (c.truncated != null) {
     lines.push('');
     lines.push(
