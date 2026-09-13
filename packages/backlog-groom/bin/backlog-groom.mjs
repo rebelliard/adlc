@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { parseProfile } from '../lib/profile.mjs';
 import { groom } from '../lib/groom.mjs';
 import { renderReport } from '../lib/report.mjs';
-import { renderUsage } from '../lib/usage.mjs';
+import { renderUsage, parseOptions } from '../lib/usage.mjs';
 
 const USAGE = renderUsage();
 
@@ -29,17 +29,7 @@ function opError(message) {
 
 let values;
 try {
-  ({ values } = parseArgs({
-    options: {
-      profile: { type: 'string' },
-      cache: { type: 'string' },
-      'no-cache': { type: 'boolean', default: false },
-      threshold: { type: 'string', default: '0.2' },
-      json: { type: 'boolean', default: false },
-      out: { type: 'string' },
-      help: { type: 'boolean', default: false },
-    },
-  }));
+  ({ values } = parseArgs({ options: parseOptions() }));
 } catch (err) {
   opError(err.message);
 }

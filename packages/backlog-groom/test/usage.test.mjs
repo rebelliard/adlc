@@ -29,3 +29,12 @@ test('help states plainly that the command never writes to GitHub', () => {
   // The read-only boundary is the whole reason this half can run unattended.
   assert.match(renderUsage(), /never writes to GitHub/);
 });
+
+test('the usage block separates its header from the flag list with a blank line', () => {
+  // Rendered layout, not prose: the flag list must be visually distinct from the
+  // summary line or the help reads as one wall of text.
+  const lines = renderUsage([{ name: 'x', arg: null, help: 'h' }]).split('\n');
+  assert.match(lines[0], /backlog-groom/);
+  assert.equal(lines[1], '', 'a blank line must follow the header');
+  assert.match(lines[2], /--x/);
+});

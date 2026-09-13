@@ -11,11 +11,31 @@ export const FLAGS = [
   { name: 'profile', arg: 'path', help: 'profile JSON (default .claude/backlog-groom-profile.json)' },
   { name: 'cache', arg: 'path', help: 'cache file (default .adlc/backlog-groom-cache.json; gitignored)' },
   { name: 'no-cache', arg: null, help: 'verify everything, ignoring and not writing the cache' },
-  { name: 'threshold', arg: 'n', help: 'relation candidate-filter threshold (default 0.2)' },
+  { name: 'threshold', arg: 'n', default: '0.2', help: 'relation candidate-filter threshold (default 0.2)' },
   { name: 'json', arg: null, help: 'emit the groomed set as JSON instead of the report' },
   { name: 'out', arg: 'path', help: 'write the groomed set JSON to a file' },
   { name: 'help', arg: null, help: 'show this message' },
 ];
+
+/**
+ * The `parseArgs` options object, DERIVED from the same table that renders help.
+ *
+ * One table feeding both is what actually enforces "help cannot drift from the
+ * parser". Two hand-maintained lists would let a flag exist and go undocumented,
+ * or be documented and not exist, and nothing would notice.
+ *
+ * Every boolean defaults FALSE. A boolean flag that defaults true is a switch
+ * the operator cannot turn off by omission, and `--no-cache` defaulting true
+ * would silently disable the cache for every run.
+ */
+export function parseOptions(flags = FLAGS) {
+  const out = {};
+  for (const f of flags) {
+    out[f.name] = f.arg ? { type: 'string' } : { type: 'boolean', default: false };
+    if (f.arg && f.default !== undefined) out[f.name].default = f.default;
+  }
+  return out;
+}
 
 /** Render the usage block from the flag table. */
 export function renderUsage(flags = FLAGS) {
