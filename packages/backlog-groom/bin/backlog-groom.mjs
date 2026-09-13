@@ -19,12 +19,21 @@ import { renderReport } from '../lib/report.mjs';
 import { renderUsage, parseOptions, validateThreshold } from '../lib/usage.mjs';
 import { loadProfile, loadCache, saveCache, serialiseJson } from '../lib/io.mjs';
 
+/**
+ * The operational-error exit code, named once and used by BOTH exit paths.
+ *
+ * Two literals would drift: an unexpected failure and a reported one would
+ * eventually disagree about what a caller sees, and only one of them has a test
+ * reaching it.
+ */
+const EXIT_OPERATIONAL = 1;
+
 process.on('uncaughtException', (err) => {
   // An opError has already printed its message and set the exit code; a stack
   // trace on top of it is noise the operator has to read past.
   if (err?.handled) return;
   console.error(`backlog-groom: ${err?.stack ?? err}`);
-  process.exitCode = 1;
+  process.exitCode = EXIT_OPERATIONAL;
 });
 
 const USAGE = renderUsage();
@@ -40,7 +49,7 @@ const USAGE = renderUsage();
  */
 function opError(message) {
   console.error(`backlog-groom: ${message}`);
-  process.exitCode = 1;
+  process.exitCode = EXIT_OPERATIONAL;
   throw Object.assign(new Error(message), { handled: true });
 }
 

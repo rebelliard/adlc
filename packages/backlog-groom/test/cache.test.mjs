@@ -142,6 +142,13 @@ test('AC10: a cache written under an older schema version is a MISS, not a stale
   assert.equal(cacheGet(store, key)?.verdict, 'valid', 'the current version still hits');
 });
 
+test('AC10: the cache schema version is 2 — bumping it discards every existing cache', () => {
+  // Pinned deliberately, like the fetch cap. The value is not incidental: raising
+  // it invalidates every cache anyone has on disk, so it should move when
+  // verdict semantics move and at no other time.
+  assert.equal(CACHE_SCHEMA_VERSION, 2);
+});
+
 test('AC10: the schema version is part of the key, so two versions cannot collide', () => {
   assert.match(cacheKeyFor({ updatedAt: 'T', contentHash: 'h' }), new RegExp(`^v\\\\d+:${CACHE_SCHEMA_VERSION}\\\\|`));
 });
