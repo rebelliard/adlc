@@ -37,6 +37,18 @@ const CODE_CLAIM = [
   /\b[\w.-]+\.(mjs|js|ts|tsx|jsx|json|yml|yaml|py|go|rs|sh)\b/, // a bare filename
 ];
 
+/**
+ * A citation is repo-relative. `../core/index.mjs` is written from inside some
+ * other file's directory and an absolute path belongs to whoever's machine
+ * wrote it; neither names a file in THIS repository, and handing them to git
+ * produces only noise.
+ */
+function isRepoRelative(path) {
+  if (path.startsWith('/')) return false;
+  const segments = path.split('/');
+  return !segments.includes('..') && !segments.includes('.');
+}
+
 /** Strip fenced blocks and URLs so they cannot seed path or claim matches. */
 function maskNonProse(body) {
   return String(body ?? '')
@@ -64,6 +76,14 @@ export function parseReferences(body) {
   // path inside a URL or a fence never counts).
   const paths = [];
   for (const m of masked.matchAll(PATH_WITH_OPTIONAL_LINE)) {
+    // Filtered HERE, before fence attribution: a `../core/index.mjs` mention
+    // sitting just above a snippet would otherwise claim that snippet and then
+    // be dropped, leaving the real citation below it with nothing to compare.
+    // The leading `/` of an absolute path is outside the character class, so
+    // `/etc/passwd.txt` matches as `etc/passwd.txt`. Look at what preceded the
+    // match rather than at the match alone.
+    if (masked[m.index - 1] === '/') continue;
+    if (!isRepoRelative(m[1])) continue;
     paths.push({ path: m[1], line: m[2] ? Number(m[2]) : null, at: m.index });
   }
   if (paths.length === 0) return [];

@@ -37,38 +37,91 @@ function normaliseLines(text) {
 }
 
 /**
- * Find `snippet` anywhere in `content`, returning the 1-based line where it
- * starts, or -1.
+ * Match a cited snippet against a file.
  *
- * Matching is on normalised lines, so the result is the line of the first
- * normalised line of the snippet.
+ * Snippets in issue bodies are routinely ELIDED EXCERPTS — non-contiguous lines
+ * pasted together to show the shape of a defect. Issue #1005 in this repository
+ * quotes three lines of `fence()` that sit at 42, 48 and 50 with other code
+ * between them. Requiring contiguity called that live code `fixed`, which is the
+ * dangerous verdict: an autonomous close of an open security issue. Found by
+ * running this against the real backlog, not by a test.
+ *
+ * So the match is a SUBSEQUENCE in order, and the outcome is three-valued:
+ *  - `all`     every snippet line is present, in order → the code is still there
+ *  - `none`    no snippet line survives → the code is genuinely gone
+ *  - `partial` some lines survive → the code CHANGED, but "changed" is not
+ *              "fixed", so this must never close anything
+ *
+ * @returns {{kind:'all'|'none'|'partial', firstLine:number, matched:number, total:number}}
  */
-export function findSnippet(content, snippet) {
-  const hay = normaliseLines(content);
+export function matchSnippet(content, snippet) {
   const needle = normaliseLines(snippet);
-  if (needle.length === 0) return -1;
+  const hay = normaliseLines(content);
+  if (needle.length === 0) return { kind: 'none', firstLine: -1, matched: 0, total: 0 };
 
-  // Map normalised-line index back to the original 1-based line number.
   const originalLineOf = [];
   String(content).split('\n').forEach((l, i) => {
     if (l.trim().length > 0) originalLineOf.push(i + 1);
   });
 
-  outer: for (let i = 0; i + needle.length <= hay.length; i += 1) {
-    for (let j = 0; j < needle.length; j += 1) {
-      if (hay[i + j] !== needle[j]) continue outer;
-    }
-    return originalLineOf[i] ?? -1;
+  // Greedy in-order subsequence walk.
+  let hi = 0;
+  let matched = 0;
+  let firstLine = -1;
+  for (const want of needle) {
+    while (hi < hay.length && hay[hi] !== want) hi += 1;
+    if (hi >= hay.length) break;
+    if (firstLine === -1) firstLine = originalLineOf[hi] ?? -1;
+    matched += 1;
+    hi += 1;
   }
-  return -1;
+
+  // A line may also be present out of order; count those so a reordering is
+  // `partial` (changed) rather than `none` (gone).
+  if (matched < needle.length) {
+    const present = new Set(hay);
+    const anywhere = needle.filter((l) => present.has(l)).length;
+    if (anywhere > matched) matched = anywhere;
+    if (firstLine === -1 && anywhere > 0) {
+      const idx = hay.findIndex((l) => needle.includes(l));
+      firstLine = originalLineOf[idx] ?? -1;
+    }
+  }
+
+  const kind = matched === needle.length ? 'all' : matched === 0 ? 'none' : 'partial';
+  return { kind, firstLine, matched, total: needle.length };
 }
 
 /** The commit that last touched `path`, or null when git cannot say. */
 function defaultLastCommitFor(path, run = execFileSync) {
   try {
-    return String(run('git', ['log', '-1', '--format=%h', '--', path], { encoding: 'utf8' })).trim() || null;
+    return String(run('git', ['log', '-1', '--format=%h', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).trim() || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Has git EVER tracked this path?
+ *
+ * This is what separates a real `moved` from text that was never a citation.
+ * Issue bodies are full of path-shaped fragments — `lib/plan.mjs` from another
+ * repo, `rejection-mining/lib/llm.mjs` shorn of its `packages/` prefix by a
+ * `pkg:` label — and treating every one as a deleted file produced 186 false
+ * `moved` verdicts out of 379 issues on the first live run. A path this
+ * repository has never contained is prose, not a reference.
+ */
+function defaultEverExisted(path, run = execFileSync) {
+  try {
+    // stderr is discarded: git complains loudly about paths outside the
+    // repository, and that is an expected answer here ("no"), not a fault worth
+    // printing over the report.
+    const out = String(
+      run('git', ['log', '--all', '--oneline', '-1', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    ).trim();
+    return out.length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -84,6 +137,7 @@ export function verifyIssue(classified, io = {}) {
     readFile = (p) => readFileSync(p, 'utf8'),
     pathExists = (p) => existsSync(p),
     lastCommitFor = (p) => defaultLastCommitFor(p),
+    everExisted = (p) => defaultEverExisted(p),
   } = io;
 
   const { number, route, references = [] } = classified;
@@ -97,7 +151,14 @@ export function verifyIssue(classified, io = {}) {
   const outcomes = [];
   for (const ref of references) {
     if (!pathExists(ref.path)) {
-      outcomes.push({ verdict: 'moved', evidence: { path: ref.path, citedLine: ref.line, reason: 'the cited path no longer exists' } });
+      // A path git has never tracked is not a deleted file — it is prose that
+      // happened to look like a path. Calling it `moved` would flood the report
+      // with citations the repository never had.
+      if (!everExisted(ref.path)) {
+        outcomes.push({ verdict: 'not-a-reference', reason: `${ref.path} has never existed in this repository` });
+        continue;
+      }
+      outcomes.push({ verdict: 'moved', evidence: { path: ref.path, citedLine: ref.line, reason: 'the cited path existed and no longer does' } });
       continue;
     }
     if (!ref.snippet) {
@@ -111,16 +172,23 @@ export function verifyIssue(classified, io = {}) {
       outcomes.push({ verdict: 'unverifiable', reason: `${ref.path} is unreadable: ${err.code ?? err.message}` });
       continue;
     }
-    const foundAtLine = findSnippet(content, ref.snippet);
-    if (foundAtLine === -1) {
+    const m = matchSnippet(content, ref.snippet);
+    if (m.kind === 'none') {
       outcomes.push({
         verdict: 'fixed',
         evidence: {
           path: ref.path,
           citedLine: ref.line,
           commit: lastCommitFor(ref.path),
-          reason: 'the cited snippet is absent from the entire file',
+          reason: 'no line of the cited snippet survives anywhere in the file',
         },
+      });
+    } else if (m.kind === 'partial') {
+      // The code CHANGED, and "changed" is not "fixed". Concluding otherwise
+      // here is how an elided excerpt or a partial refactor closes a live issue.
+      outcomes.push({
+        verdict: 'unverifiable',
+        reason: `only ${m.matched} of ${m.total} cited line(s) survive in ${ref.path} — changed, but not demonstrably fixed`,
       });
     } else {
       outcomes.push({
@@ -128,8 +196,8 @@ export function verifyIssue(classified, io = {}) {
         evidence: {
           path: ref.path,
           citedLine: ref.line,
-          foundAtLine,
-          movedWithinFile: ref.line != null && foundAtLine !== ref.line,
+          foundAtLine: m.firstLine,
+          movedWithinFile: ref.line != null && m.firstLine !== ref.line,
         },
       });
     }

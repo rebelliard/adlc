@@ -105,3 +105,29 @@ test('AC2: every route is exactly one of the three, for every input', () => {
     assert.ok(['mechanical', 'model', 'unverifiable'].includes(c.route), `unexpected route ${c.route}`);
   }
 });
+
+test('AC2: a non-repo-relative path is not a reference, and does not steal a later citation\'s snippet', () => {
+  // Ordering bug this pins: if `../core/index.mjs` is filtered only at the end,
+  // it still claims the fence that follows it, and the real citation below is
+  // left with nothing to compare — a silent downgrade from a verifiable issue to
+  // an unverifiable one.
+  const body = [
+    'imported from `../core/index.mjs` originally',
+    '',
+    '**Location** `packages/core/lib/text.mjs:37`',
+    '',
+    '```',
+    'const tag = `${label}-${capped.length}`;',
+    '```',
+  ].join('\n');
+  const refs = parseReferences(body);
+  assert.equal(refs.length, 1);
+  assert.equal(refs[0].path, 'packages/core/lib/text.mjs');
+  assert.match(refs[0].snippet, /const tag/, 'the snippet belongs to the real citation');
+});
+
+test('AC2: absolute paths and dot segments are never references', () => {
+  assert.deepEqual(parseReferences('see /etc/passwd.txt for it'), []);
+  assert.deepEqual(parseReferences('see ./local/thing.mjs for it'), []);
+  assert.deepEqual(parseReferences('see ../up/thing.mjs for it'), []);
+});

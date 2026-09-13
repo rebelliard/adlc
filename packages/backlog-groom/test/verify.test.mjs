@@ -16,8 +16,14 @@ import { verifyIssue } from '../lib/verify.mjs';
 
 const SNIPPET = "const code = typeof res?.code === 'number' ? res.code : 1;";
 
-/** A world where `files` maps path → contents; anything else does not exist. */
-function world(files, lastCommit = 'abc1234') {
+/**
+ * A world where `files` maps path → contents; anything else does not exist.
+ *
+ * `everExisted` defaults to true, so an absent path means "it was here and is
+ * gone" — a real `moved`. The never-tracked case is exercised explicitly below,
+ * because the two are different findings and only one of them is decay.
+ */
+function world(files, lastCommit = 'abc1234', everExisted = () => true) {
   return {
     readFile: (p) => {
       if (!(p in files)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
@@ -25,6 +31,7 @@ function world(files, lastCommit = 'abc1234') {
     },
     pathExists: (p) => p in files,
     lastCommitFor: () => lastCommit,
+    everExisted,
   };
 }
 
@@ -144,4 +151,88 @@ test('a verdict is always one of the declared values', () => {
     const v = verifyIssue(c, world(files));
     assert.ok(['valid', 'fixed', 'moved', 'unverifiable', 'unverified'].includes(v.verdict), `unexpected verdict ${v.verdict}`);
   }
+});
+
+test('AC3: a path git has NEVER tracked is not a reference at all, and never moved', () => {
+  // Found by the first live run: issue bodies are full of path-shaped prose —
+  // `lib/plan.mjs` from another project, `rejection-mining/lib/llm.mjs` shorn of
+  // its `packages/` prefix by a `pkg:` label. Treating each as a deleted file
+  // produced 186 false `moved` verdicts out of 379 issues, which would have
+  // buried every real finding.
+  const v = verifyIssue(
+    mechanical([{ path: 'lib/from-another-repo.mjs', line: 1, snippet: SNIPPET }]),
+    world({}, 'abc1234', () => false)
+  );
+  assert.notEqual(v.verdict, 'moved', 'prose that looks like a path is not decay');
+  assert.equal(v.verdict, 'unverifiable');
+  assert.match(v.reason, /never existed/i);
+});
+
+test('AC3: moved and never-tracked are distinguished by git history, not by spelling', () => {
+  const tracked = verifyIssue(mechanical([{ path: 'lib/deleted.mjs', line: 1, snippet: SNIPPET }]), world({}, 'abc1234', () => true));
+  assert.equal(tracked.verdict, 'moved');
+
+  const never = verifyIssue(mechanical([{ path: 'lib/deleted.mjs', line: 1, snippet: SNIPPET }]), world({}, 'abc1234', () => false));
+  assert.equal(never.verdict, 'unverifiable');
+});
+
+test('AC3: a real moved outranks a never-tracked sibling reference', () => {
+  const v = verifyIssue(
+    mechanical([
+      { path: 'noise/prose.mjs', line: 1, snippet: SNIPPET },
+      { path: 'lib/deleted.mjs', line: 1, snippet: SNIPPET },
+    ]),
+    world({}, 'abc1234', (p) => p === 'lib/deleted.mjs')
+  );
+  assert.equal(v.verdict, 'moved');
+  assert.equal(v.evidence.path, 'lib/deleted.mjs', 'the evidence cites the path that actually existed');
+});
+
+test('AC1/AC13: an ELIDED excerpt — non-contiguous lines pasted together — verifies valid', () => {
+  // Found against the real backlog, not by a test. Issue #1005 quotes three
+  // lines of fence() that sit at 42, 48 and 50 with other code between them.
+  // Requiring contiguity verdicted that live security issue `fixed`, which
+  // would have closed it autonomously.
+  const file = [
+    'export function fence(label, content, maxChars) {',
+    '  const capped = tail(raw, maxChars);',
+    '  const truncated = capped.length < raw.length;',
+    '  // a comment the issue did not quote',
+    '  const tag = `${label}-${capped.length}`;',
+    '  const marker = truncated ? long : label;',
+    '  return `<<UNTRUSTED:${marker}:${tag}>>`;',
+    '}',
+  ].join('\n');
+  const excerpt = [
+    'const capped = tail(raw, maxChars);',
+    'const tag = `${label}-${capped.length}`;',
+    'return `<<UNTRUSTED:${marker}:${tag}>>`;',
+  ].join('\n');
+
+  const v = verifyIssue(mechanical([{ path: 'lib/text.mjs', line: 37, snippet: excerpt }]), world({ 'lib/text.mjs': file }));
+  assert.equal(v.verdict, 'valid', 'every quoted line is still present, just not adjacent');
+});
+
+test('AC1: a PARTIAL survival is unverifiable, never fixed — changed is not fixed', () => {
+  // The middle ground is where a naive matcher does the damage: some of the
+  // cited code survives, so the defect may well still be there in a new shape.
+  const file = 'const capped = tail(raw, maxChars);\nsomething completely different\n';
+  const excerpt = 'const capped = tail(raw, maxChars);\nconst tag = `${label}-${capped.length}`;\n';
+  const v = verifyIssue(mechanical([{ path: 'lib/text.mjs', line: 1, snippet: excerpt }]), world({ 'lib/text.mjs': file }));
+  assert.equal(v.verdict, 'unverifiable');
+  assert.match(v.reason, /1 of 2/, 'the report says exactly how much survived');
+});
+
+test('AC1: fixed still requires that NO cited line survives', () => {
+  const file = 'nothing from the citation at all\n';
+  const excerpt = 'const capped = tail(raw, maxChars);\nconst tag = one;\n';
+  const v = verifyIssue(mechanical([{ path: 'lib/text.mjs', line: 1, snippet: excerpt }]), world({ 'lib/text.mjs': file }));
+  assert.equal(v.verdict, 'fixed');
+  assert.match(v.evidence.reason, /no line/i);
+});
+
+test('AC1: reordered cited lines are partial, not gone — a reorder is not a fix', () => {
+  const file = 'const b = 2;\nconst a = 1;\n';
+  const v = verifyIssue(mechanical([{ path: 'x.mjs', line: 1, snippet: 'const a = 1;\nconst b = 2;\nconst c = 3;' }]), world({ 'x.mjs': file }));
+  assert.notEqual(v.verdict, 'fixed');
 });
