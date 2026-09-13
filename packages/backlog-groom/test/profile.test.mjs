@@ -113,3 +113,10 @@ test('AC21: every priority band is a known key — high, medium and low all pars
   const p = parseProfile({ schemaVersion: 1, labels: { priority: { high: 'H', medium: 'M', low: 'L' } } });
   assert.deepEqual(p.labels.priority, { high: 'H', medium: 'M', low: 'L' });
 });
+
+test('AC21: both provider roles are known keys — decider and reviewer', () => {
+  // `reviewer` dropping out of the known set would make a correct profile an
+  // error, and it is the key the write path needs to require a distinct reviewer.
+  const p = parseProfile({ schemaVersion: 1, providers: { decider: 'anthropic', reviewer: 'openai' } });
+  assert.deepEqual(p.providers, { decider: 'anthropic', reviewer: 'openai' });
+});

@@ -236,3 +236,21 @@ test('AC1: reordered cited lines are partial, not gone — a reorder is not a fi
   const v = verifyIssue(mechanical([{ path: 'x.mjs', line: 1, snippet: 'const a = 1;\nconst b = 2;\nconst c = 3;' }]), world({ 'x.mjs': file }));
   assert.notEqual(v.verdict, 'fixed');
 });
+
+test('AC1: a single-character line is part of the citation — a lone brace is not noise', () => {
+  // Normalisation drops BLANK lines only. Dropping short ones too would erase
+  // `}` and `)` from both sides, so a snippet whose only remaining difference is
+  // its closing brace would compare equal.
+  const file = 'if (x) {\n  doThing();\n}\n';
+  const v = verifyIssue(mechanical([{ path: 'a.mjs', line: 1, snippet: 'if (x) {\n  doThing();\n}' }]), world({ 'a.mjs': file }));
+  assert.equal(v.verdict, 'valid');
+
+  // A snippet sharing only its closing brace with the file must not read as
+  // present: `}` alone is not the citation.
+  const braceOnly = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippet: 'if (y) {\n  other();\n}' }]),
+    world({ 'a.mjs': file })
+  );
+  assert.notEqual(braceOnly.verdict, 'valid', 'a different body must not match just because the braces do');
+  assert.equal(braceOnly.verdict, 'unverifiable', 'one shared line of three is partial survival, which never closes');
+});

@@ -149,3 +149,11 @@ test('AC2: a URL with a digit in its scheme is still masked — s3://, h2://', (
   const refs = parseReferences('artifacts live at s3://bucket/packages/core/lib/text.mjs today');
   assert.deepEqual(refs, []);
 });
+
+test('AC2: a code-shaped token inside a URL is not a code claim', () => {
+  // The URL mask has to cover schemes with digits too. Unmasked, the filename in
+  // an s3:// link reads as a bare-filename code claim and the issue is routed to
+  // an expensive model verification it never warranted.
+  const c = classifyIssue({ number: 1, title: 'artifacts', body: 'they live at s3://bucket/dir/thing.mjs and rotate weekly', labels: [] });
+  assert.equal(c.route, 'unverifiable');
+});

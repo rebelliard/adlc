@@ -69,3 +69,11 @@ test('issues group by unit, and those with no unit are reported unclustered rath
   assert.deepEqual(clusters, [{ unit: 'parallax', issues: [1, 2] }]);
   assert.deepEqual(unclustered, [3], 'an unclustered issue is still in the backlog');
 });
+
+test('**/ is a DIRECTORY boundary — packages/**/a.mjs does not match packages/xa.mjs', () => {
+  // The difference between `(?:.*/)?` and a bare `.*`. Without the boundary,
+  // `**/a.mjs` silently matches any path merely ENDING in a.mjs, and issues land
+  // in a unit they have nothing to do with.
+  assert.equal(globMatch('packages/**/a.mjs', 'packages/xa.mjs'), false);
+  assert.ok(globMatch('packages/**/a.mjs', 'packages/x/a.mjs'));
+});
