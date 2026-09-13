@@ -54,3 +54,24 @@ test('every boolean flag defaults FALSE — a switch must not be on by omission'
     assert.equal(options[f.name].default, false, `--${f.name} must default false`);
   }
 });
+
+test('a documented default is the parser default — help must not promise what the parser does not do', () => {
+  // `--threshold` says "(default 0.2)" in help. If the parser carries no
+  // default, a plain run reads `undefined`, fails validation, and the CLI is
+  // unusable without passing a flag help says is optional.
+  const options = parseOptions();
+  assert.equal(options.threshold.default, '0.2');
+  for (const f of FLAGS.filter((x) => x.arg && x.default !== undefined)) {
+    assert.equal(options[f.name].default, f.default, `--${f.name} default must match the table`);
+  }
+});
+
+test('a value flag with no declared default carries no default key at all', () => {
+  // Setting `default: undefined` is not the same as leaving it out: it makes the
+  // parser report the key as present-but-empty, which reads as "the operator
+  // passed it blank".
+  const options = parseOptions();
+  for (const f of FLAGS.filter((x) => x.arg && x.default === undefined)) {
+    assert.equal(Object.hasOwn(options[f.name], 'default'), false, `--${f.name} must not declare a default`);
+  }
+});
