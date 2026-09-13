@@ -1,5 +1,7 @@
 // text.mjs — shared text-shaping helpers for capping prompt payloads.
-// Zero dependencies, pure functions.
+// Zero third-party dependencies; fence() draws entropy from node:crypto.
+
+import { randomUUID } from 'node:crypto';
 
 /**
  * Tail the last `maxChars` characters of a string. Used across the toolkit
@@ -41,11 +43,16 @@ export function fence(label, content, maxChars) {
   const raw = content ?? '';
   const capped = tail(raw, maxChars);
   const truncated = capped.length < raw.length;
-  // The tag is derived from the CAPPED length (what's actually embedded),
-  // not the original — the tag's whole purpose is to make the fence
-  // unguessable from content the model doesn't control, and the model only
-  // ever sees the capped content.
-  const tag = `${label}-${capped.length}`;
+  // The tag is a per-call nonce (#1005). It was previously derived from the
+  // capped length, which made it computable by whoever wrote the content:
+  // `label` is a literal at every call site and `capped.length` equals
+  // `maxChars` exactly whenever the content is capped, so the content author
+  // could emit the closing marker themselves and escape the fence. Un-capped
+  // content was forgeable too — the tag was then a fixed point on the author's
+  // own payload length, solvable by padding. A nonce is unguessable by
+  // construction, which is the property the fence needs and the only one it
+  // ever claimed.
+  const tag = randomUUID();
   const marker = truncated ? `${label} (truncated, showing last ${maxChars} of ${raw.length} chars)` : label;
   return `<<UNTRUSTED:${marker}:${tag}>>\n${capped}\n<<END:${label}:${tag}>>`;
 }

@@ -107,7 +107,8 @@ describe('prompt construction', () => {
   test('buildPrompt fences the ticket content and caps it to exactly 8000 chars, tail-biased', () => {
     const ticket = { id: 'T8', title: 'Big ticket', body: 'x'.repeat(20_000) };
     const prompt = buildPrompt(ticket);
-    assert.match(prompt, /<<UNTRUSTED:TICKET \(truncated, showing last 8000 of \d+ chars\):TICKET-8000>>/);
+    // The tag is a per-call nonce (#1005) — assert the shape, not the literal.
+    assert.match(prompt, /<<UNTRUSTED:TICKET \(truncated, showing last 8000 of \d+ chars\):[0-9a-f-]{36}>>/);
     const embedded = prompt.match(/<<UNTRUSTED:TICKET[^\n]*\n([\s\S]*?)\n<<END:TICKET/)[1];
     assert.equal(embedded.length, 8000);
   });

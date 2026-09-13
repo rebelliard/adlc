@@ -53,7 +53,7 @@ test('builderPrompt uses no persona framing ("You are a senior engineer" etc.)',
 // executing the spec IS the builder's job.
 test('builderPrompt fences the spec and caps it to exactly 8000 chars, tail-biased', () => {
   const prompt = builderPrompt(ticket({ body: 'y'.repeat(20_000) }), {});
-  assert.match(prompt, /<<UNTRUSTED:SPEC \(truncated, showing last 8000 of \d+ chars\):SPEC-8000>>/);
+  assert.match(prompt, /<<UNTRUSTED:SPEC \(truncated, showing last 8000 of \d+ chars\):[0-9a-f-]{36}>>/);
   const embedded = prompt.match(/<<UNTRUSTED:SPEC[^\n]*\n([\s\S]*?)\n<<END:SPEC/)[1];
   assert.equal(embedded.length, 8000);
 });
@@ -66,10 +66,14 @@ test('builderPrompt declares the Constraints section authoritative over the fenc
 
 // ── fixPrompt ────────────────────────────────────────────────────────────
 
-test('fixPrompt with no dead-ends is identical to builderPrompt', () => {
+test('fixPrompt with no dead-ends is identical to builderPrompt (modulo the fence nonce)', () => {
   const t = ticket();
   const gate = { build: 'npm run build' };
-  assert.equal(fixPrompt(t, gate, []), builderPrompt(t, gate));
+  // fence() draws a fresh nonce per call (#1005), so two independently built
+  // prompts are never byte-identical. Normalise the nonce and compare the rest —
+  // the property under test is that no dead-ends adds no content.
+  const norm = (s) => s.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<nonce>');
+  assert.equal(norm(fixPrompt(t, gate, [])), norm(builderPrompt(t, gate)));
 });
 
 test('fixPrompt fences each dead-end and marks it untrusted data, not instructions', () => {
