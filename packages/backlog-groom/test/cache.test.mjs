@@ -152,3 +152,26 @@ test('AC10: the cache schema version is 2 — bumping it discards every existing
 test('AC10: the schema version is part of the key, so two versions cannot collide', () => {
   assert.match(cacheKeyFor({ updatedAt: 'T', contentHash: 'h' }), new RegExp(`^v\\\\d+:${CACHE_SCHEMA_VERSION}\\\\|`));
 });
+
+test('AC22: the DEFAULT reader really reads git at a revision — not an injected stub', () => {
+  // Every other test injects readFile, so the production path that talks to git
+  // was never exercised. Run against this repository's own HEAD, which is the
+  // only thing guaranteed to be present wherever this suite runs.
+  const real = contentHash(['package.json']);
+  assert.match(String(real), /^[0-9a-f]{64}$/, 'a real digest, so the git read returned content');
+
+  const other = contentHash(['package-lock.json']);
+  assert.match(String(other), /^[0-9a-f]{64}$/);
+  assert.notEqual(real, other, 'two different tracked files must not hash alike');
+});
+
+test('AC22: a path absent at the revision yields no hash through the default reader', () => {
+  assert.equal(contentHash(['this/path/does/not/exist.mjs']), null);
+});
+
+test('AC22: the revision is honoured — an empty tree hashes nothing', () => {
+  // The empty-tree object is in every git repository, so this is hermetic. A
+  // reader ignoring `revision` would still find package.json at HEAD and return
+  // a digest.
+  assert.equal(contentHash(['package.json'], { revision: '4b825dc642cb6eb9a060e54bf8d69288fbee4904' }), null);
+});

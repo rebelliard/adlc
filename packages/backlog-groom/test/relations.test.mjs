@@ -167,3 +167,14 @@ test('AC19: the bound is high enough that ordinary issues are unaffected', () =>
   const ordinary = { number: 2, title: 'a normal issue title', body: 'a few sentences of ordinary prose about a defect in a file somewhere' };
   assert.ok(tokens(ordinary).size < MAX_TOKENS_PER_ISSUE);
 });
+
+test('AC19: tokens are MEMOISED per issue — the same set instance comes back', () => {
+  // Asserted by identity because the alternative is invisible: without the
+  // cache every result is still correct, and only the O(n^2) sweep gets slower.
+  const issue = { number: 1, title: 'a title', body: 'some prose about a defect' };
+  assert.equal(tokens(issue), tokens(issue), 'a repeated call must reuse the computed set');
+
+  const twin = { number: 1, title: 'a title', body: 'some prose about a defect' };
+  assert.notEqual(tokens(issue), twin === issue ? tokens(issue) : tokens(twin), 'a different object gets its own set');
+  assert.deepEqual([...tokens(issue)].sort(), [...tokens(twin)].sort(), 'with equal contents');
+});
