@@ -197,6 +197,13 @@ test('AC2: citations are capped per issue, and the issue is marked truncated', (
   assert.equal(c.referencesTruncated, true);
 });
 
+test('AC2: the citation cap is 50 — the value is a deliberate budget, not a default', () => {
+  // Pinned like the other operator-visible bounds. 50 citations is already far
+  // past what a real issue carries, and each one costs several synchronous git
+  // subprocesses, so the number is the per-issue work budget for a sweep.
+  assert.equal(MAX_REFERENCES_PER_ISSUE, 50);
+});
+
 test('AC2: an ordinary issue is not marked truncated', () => {
   const c = classifyIssue({ number: 2, title: 't', body: 'see `lib/a.mjs:1` and `lib/b.mjs:2`', labels: [] });
   assert.equal(c.references.length, 2);
