@@ -50,7 +50,7 @@ test('AC1: a snippet absent from the whole file verifies fixed, with the changin
   const files = { 'lib/a.mjs': 'something else entirely\n' };
   const v = verifyIssue(mechanical([{ path: 'lib/a.mjs', line: 2, snippet: SNIPPET }]), world(files, 'deadbee'));
   assert.equal(v.verdict, 'fixed');
-  assert.equal(v.evidence.commit, 'deadbee', 'a close must cite the commit that changed the code');
+  assert.equal(v.evidence.lastCommitTouchingPath, 'deadbee', 'a close cites the last commit to touch the path — named for what it is');
   assert.ok(v.evidence.path === 'lib/a.mjs');
 });
 
@@ -375,4 +375,26 @@ test('AC1: an empty fence alongside a real one does not dilute the real verdict'
     world({ 'a.mjs': 'still here\n' })
   );
   assert.equal(v.verdict, 'valid');
+});
+
+test('AC1: a snippet quoting the same line twice is not satisfied by one occurrence', () => {
+  // Raised in cross-model review. Counting needle lines against a SET of
+  // haystack lines double-counts duplicates, so a snippet quoting a line twice
+  // against a file retaining it once reported `all` — a false `valid` on code
+  // that is half gone.
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippets: ['dup();\nother();\ndup();'] }]),
+    world({ 'a.mjs': 'dup();\nunrelated();\n' })
+  );
+  assert.notEqual(v.verdict, 'valid', 'two occurrences were cited and only one survives');
+  assert.equal(v.verdict, 'unverifiable', 'partial survival never closes either');
+});
+
+test('AC1: close evidence pins the revision it was computed against', () => {
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippets: ['gone'] }]),
+    { ...world({ 'a.mjs': 'nothing\n' }), revision: 'cafe1234' }
+  );
+  assert.equal(v.verdict, 'fixed');
+  assert.equal(v.evidence.revision, 'cafe1234', 'evidence without a revision cannot be re-checked later');
 });

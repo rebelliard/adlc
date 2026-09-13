@@ -28,7 +28,7 @@ Verdicts are `valid`, `fixed`, `moved`, `unverifiable`, and `unverified` for the
 - An **elided excerpt is still a citation.** Bodies routinely quote non-contiguous lines, so matching is an in-order subsequence — and *partial* survival is `unverifiable`, because changed is not fixed.
 - A path **git has never tracked is not a deleted file**, it is prose shaped like a path.
 
-Across several citations the order is `moved` > `valid` > `fixed`, so every tie-break fails towards not closing.
+Across several citations the precedence is `moved` > `valid` > `unverifiable` > `fixed`, so every tie-break fails towards not closing. `unverifiable` outranking `fixed` is the subtle one: an issue with one citation gone and another that could not be checked has not been shown fixed, and closing it would act on incomplete evidence.
 
 ## Profile
 
@@ -39,3 +39,11 @@ Across several citations the order is `moved` > `valid` > `fixed`, so every tie-
 The cache is keyed on `(updatedAt, contentHash)` and is gitignored. An issue with no referenced paths has no `contentHash` and is never cached as `valid` — such a key could never be invalidated by a code change.
 
 Every run leads with its route distribution, and a truncated fetch says so loudly. Relation candidates come from a similarity filter that is never evidence; each run reports how many pairs it excluded, since those were never judged and they bound what the run could have found.
+
+## What `fixed` does and does not mean
+
+`fixed` means every line an issue cited is gone from the file it cited. It does not mean the defect was fixed: a refactor can preserve the same wrong behaviour while rewriting every quoted line, and code can survive verbatim while the logic around it stops reaching it.
+
+That is why `fixed` produces a close **proposal** rather than a close, why the evidence carries the revision it was computed against, and why the write path puts every proposal through a fresh-context reviewer and the autonomy floor first. The verdict is a strong triage signal, not a proof, and nothing in the design treats it as one. The evidence field is named `lastCommitTouchingPath` rather than "the removing commit" for the same reason — that is what it actually is.
+
+The cache is a local, gitignored performance artifact and **not a trust boundary**: anyone who can write it can also edit the code that produces verdicts, so it grants no privilege, and a cached verdict is never evidence. `--no-cache` forces full re-verification when a run must stand on its own.

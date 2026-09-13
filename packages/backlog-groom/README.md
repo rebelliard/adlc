@@ -48,8 +48,11 @@ Three rules keep `fixed` — the verdict that leads to a close — honest:
   like a path, and calling it `moved` floods the report with citations this
   repository never had.
 
-Across several citations the order is `moved` > `valid` > `fixed`, so every
-tie-break fails towards *not* closing.
+Across several citations the precedence is `moved` > `valid` > `unverifiable` >
+`fixed`, so every tie-break fails towards *not* closing. `unverifiable`
+outranking `fixed` is the subtle one: an issue with one citation gone and another
+that could not be checked has not been shown fixed, and closing it would act on
+incomplete evidence.
 
 ## Profile
 
@@ -96,3 +99,33 @@ Every run leads with its route distribution, and a truncated fetch says so
 loudly. A sweep that mechanically verified 4% is still useful — but that number
 sits next to the conclusions, because an incomplete examination must never
 present as a complete one.
+
+## What `fixed` does and does not mean
+
+`fixed` means **every line this issue cited is gone from the file it cited**. It
+does not mean the defect was fixed, and the difference matters:
+
+- A refactor can preserve the same wrong behaviour while rewriting every quoted
+  line. This tool would verdict `fixed`; the bug would still be there.
+- Conversely, code can survive verbatim while the surrounding logic stops
+  reaching it.
+
+That is why `fixed` produces a close **proposal** rather than a close, why the
+evidence carries the revision it was computed against and the paths it read, and
+why the write path puts every proposal through a fresh-context reviewer and the
+autonomy floor before anything is applied. The verdict is a strong signal for
+triage, not a proof, and no part of this design treats it as one.
+
+The evidence field is named `lastCommitTouchingPath` for the same reason: it is
+the last commit to touch the file, not necessarily the commit that removed the
+cited lines. Finding that would need a pickaxe search per citation, and calling
+it the removing commit would be a claim the tool never checked.
+
+## The cache is not a trust boundary
+
+The cache is a local, gitignored performance artifact. Anyone able to write it
+can inject a verdict — but anyone able to write it can also edit the code that
+produces verdicts, so it adds no privilege. It follows that a cached verdict is
+**not** evidence: the write path must treat proposals as things to be reviewed on
+their own merits, and `--no-cache` forces full re-verification when a run needs
+to stand on its own.

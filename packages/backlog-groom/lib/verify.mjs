@@ -78,8 +78,20 @@ export function matchSnippet(content, snippet) {
   // A line may also be present out of order; count those so a reordering is
   // `partial` (changed) rather than `none` (gone).
   if (matched < needle.length) {
-    const present = new Set(hay);
-    const anywhere = needle.filter((l) => present.has(l)).length;
+    // MULTISET, not a Set. Counting each needle line against a set of haystack
+    // lines double-counts duplicates: a snippet quoting the same line twice,
+    // where the file retains it once, would count two matches and report `all` —
+    // a false `valid` on code that is half gone.
+    const available = new Map();
+    for (const l of hay) available.set(l, (available.get(l) ?? 0) + 1);
+    let anywhere = 0;
+    for (const l of needle) {
+      const left = available.get(l) ?? 0;
+      if (left > 0) {
+        available.set(l, left - 1);
+        anywhere += 1;
+      }
+    }
     if (anywhere > matched) matched = anywhere;
     if (firstLine === -1 && anywhere > 0) {
       const idx = hay.findIndex((l) => needle.includes(l));
@@ -239,7 +251,12 @@ export function verifyIssue(classified, io = {}) {
         evidence: {
           path: ref.path,
           citedLine: ref.line,
-          commit: lastCommitFor(ref.path),
+          revision,
+          // NAMED for what it is. This is the last commit to touch the path, not
+          // necessarily the one that removed the cited lines — finding that
+          // would need a pickaxe search per citation. Calling it the removing
+          // commit in close evidence would be a claim the tool never checked.
+          lastCommitTouchingPath: lastCommitFor(ref.path),
           reason: snippets.length > 1
             ? `no line of any of the ${snippets.length} cited excerpts survives anywhere in the file`
             : 'no line of the cited snippet survives anywhere in the file',

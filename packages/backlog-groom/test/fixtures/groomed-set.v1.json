@@ -61,7 +61,8 @@
       "evidence": {
         "path": "packages/parallax/lib/scoring.mjs",
         "citedLine": 14,
-        "commit": "cafe123",
+        "revision": "fixture",
+        "lastCommitTouchingPath": "cafe123",
         "reason": "no line of the cited snippet survives anywhere in the file"
       },
       "rank": {

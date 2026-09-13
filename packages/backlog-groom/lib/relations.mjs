@@ -21,6 +21,17 @@
 /** The relation kinds the intent's worked example requires staying distinct. */
 export const RELATION_KINDS = Object.freeze(['duplicate-of', 'related-to', 'superseded-by']);
 
+/**
+ * Cap on tokens considered per issue.
+ *
+ * Bodies are deliberately uncapped at fetch (a truncated body drops citations),
+ * but relation filtering is O(n²) and a handful of issues carrying pasted logs
+ * would otherwise dominate the whole sweep. Similarity is a coarse FILTER, so
+ * the first N distinct content tokens are ample for it; the full body is still
+ * what verification and judgment see.
+ */
+export const MAX_TOKENS_PER_ISSUE = 400;
+
 const STOP = new Set(['the', 'a', 'an', 'is', 'in', 'on', 'of', 'to', 'and', 'or', 'for', 'it', 'that', 'this', 'with', 'when', 'not', 'be', 'are', 'was']);
 
 /**
@@ -33,7 +44,7 @@ const STOP = new Set(['the', 'a', 'an', 'is', 'in', 'on', 'of', 'to', 'and', 'or
  */
 const TOKEN_CACHE = new WeakMap();
 
-function tokens(issue) {
+export function tokens(issue) {
   if (typeof issue === 'object' && issue !== null) {
     const hit = TOKEN_CACHE.get(issue);
     if (hit) return hit;
@@ -44,12 +55,13 @@ function tokens(issue) {
 }
 
 function buildTokens(issue) {
-  return new Set(
-    `${issue.title ?? ''} ${issue.body ?? ''}`
-      .toLowerCase()
-      .split(/[^a-z0-9_]+/)
-      .filter((t) => t.length > 2 && !STOP.has(t))
-  );
+  const out = new Set();
+  for (const t of `${issue.title ?? ''} ${issue.body ?? ''}`.toLowerCase().split(/[^a-z0-9_]+/)) {
+    if (t.length <= 2 || STOP.has(t)) continue;
+    out.add(t);
+    if (out.size >= MAX_TOKENS_PER_ISSUE) break;
+  }
+  return out;
 }
 
 /** Jaccard overlap of two token sets — the cheap filter, never the evidence. */

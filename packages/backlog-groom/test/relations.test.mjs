@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { candidatePairs, emitRelations, similarity, RELATION_KINDS } from '../lib/relations.mjs';
+import { candidatePairs, emitRelations, similarity, tokens, MAX_TOKENS_PER_ISSUE, RELATION_KINDS } from '../lib/relations.mjs';
 
 const ISSUES = [
   { number: 324, title: 'Full suite is flaky on developer machines', body: 'varying 2-4 segments fail, never in CI', labels: ['bug'] },
@@ -145,4 +145,18 @@ test('AC19: a real shared term does produce similarity, so the filter is not ine
   const a = { number: 1, title: 'clone race in gate-deps', body: 'nested repository' };
   const b = { number: 2, title: 'clone race elsewhere', body: 'nested repository' };
   assert.ok(similarity(a, b) > 0);
+});
+
+test('AC19: tokens per issue are bounded, so a pasted log cannot dominate the sweep', () => {
+  // Bodies are deliberately uncapped at fetch, because a truncated body drops
+  // citations. Relation filtering is O(n²) though, so a few issues carrying
+  // pasted logs would otherwise decide how long the whole run takes. Similarity
+  // is a coarse filter; the full body still reaches verification and judgment.
+  const huge = { number: 1, title: 't', body: Array.from({ length: 5000 }, (_, i) => `token${i}`).join(' ') };
+  assert.equal(tokens(huge).size, MAX_TOKENS_PER_ISSUE);
+});
+
+test('AC19: the bound is high enough that ordinary issues are unaffected', () => {
+  const ordinary = { number: 2, title: 'a normal issue title', body: 'a few sentences of ordinary prose about a defect in a file somewhere' };
+  assert.ok(tokens(ordinary).size < MAX_TOKENS_PER_ISSUE);
 });
