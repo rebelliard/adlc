@@ -113,12 +113,37 @@ export function parseProfile(doc) {
     if (Object.hasOwn(doc.labels, 'priority')) {
       if (!isPlainObject(doc.labels.priority)) throw opError('backlog-groom profile: labels.priority must be an object');
       rejectUnknownKeys(doc.labels.priority, PRIORITY_KEYS, 'labels.priority');
+      const seenLabels = new Set();
+      for (const [band, label] of Object.entries(doc.labels.priority)) {
+        if (typeof label !== 'string' || label.length === 0) {
+          throw opError(`backlog-groom profile: labels.priority.${band} must be a non-empty string`);
+        }
+        // Two bands mapping to one label make a relabel proposal meaningless:
+        // the "from" and the "to" would be the same string.
+        if (seenLabels.has(label)) {
+          throw opError(`backlog-groom profile: labels.priority maps more than one band to ${JSON.stringify(label)}`);
+        }
+        seenLabels.add(label);
+      }
+    }
+    if (Object.hasOwn(doc.labels, 'areaPrefix')) {
+      // An EMPTY prefix makes every label on an issue look like the area label,
+      // so a proposal would name an unrelated label as the one to replace — and
+      // a consumer applying it would overwrite something it was never about.
+      if (typeof doc.labels.areaPrefix !== 'string' || doc.labels.areaPrefix.length === 0) {
+        throw opError('backlog-groom profile: labels.areaPrefix must be a non-empty string');
+      }
     }
   }
 
   if (Object.hasOwn(doc, 'providers')) {
     if (!isPlainObject(doc.providers)) throw opError('backlog-groom profile: providers must be an object');
     rejectUnknownKeys(doc.providers, PROVIDERS_KEYS, 'providers');
+    for (const [role, name] of Object.entries(doc.providers)) {
+      if (typeof name !== 'string' || name.length === 0) {
+        throw opError(`backlog-groom profile: providers.${role} must be a non-empty string`);
+      }
+    }
   }
 
   for (const [key, label] of [['autonomyFloor', 'autonomyFloor'], ['units', 'units'], ['frozenPaths', 'frozenPaths']]) {

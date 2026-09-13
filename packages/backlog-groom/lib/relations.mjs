@@ -23,8 +23,27 @@ export const RELATION_KINDS = Object.freeze(['duplicate-of', 'related-to', 'supe
 
 const STOP = new Set(['the', 'a', 'an', 'is', 'in', 'on', 'of', 'to', 'and', 'or', 'for', 'it', 'that', 'this', 'with', 'when', 'not', 'be', 'are', 'was']);
 
-/** Content tokens of an issue: title and body, lowercased, stopwords dropped. */
+/**
+ * Content tokens of an issue: title and body, lowercased, stopwords dropped.
+ *
+ * Memoised per issue object. `candidatePairs` is O(n²) and bodies are
+ * deliberately uncapped, so re-tokenizing inside the comparison made the work
+ * O(n² x body size): 500 issues is ~125,000 pairs, and each one rebuilt two
+ * token sets from full issue text before the threshold could reject it.
+ */
+const TOKEN_CACHE = new WeakMap();
+
 function tokens(issue) {
+  if (typeof issue === 'object' && issue !== null) {
+    const hit = TOKEN_CACHE.get(issue);
+    if (hit) return hit;
+  }
+  const built = buildTokens(issue);
+  if (typeof issue === 'object' && issue !== null) TOKEN_CACHE.set(issue, built);
+  return built;
+}
+
+function buildTokens(issue) {
   return new Set(
     `${issue.title ?? ''} ${issue.body ?? ''}`
       .toLowerCase()

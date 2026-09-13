@@ -39,6 +39,10 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
   // working tree, so the emitted set names the commit it read — without it a
   // consumer cannot tell which revision a verdict refers to.
   const describedCommit = generatedFor ?? (io.headCommit ? io.headCommit() : headCommit());
+  // Every git read below uses this resolved sha, not the moving `HEAD` ref, so a
+  // checkout switching branches mid-run cannot mix revisions into one set.
+  const revision = describedCommit ?? 'HEAD';
+  const readIo = { revision, ...io };
   const { issues, unconsultable, truncated } = io.fetchIssues ? io.fetchIssues() : fetchIssues(io);
   if (unconsultable) {
     // An unconsultable fetch is not an empty backlog. Returning a normal-looking
@@ -49,13 +53,13 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
   const rows = issues.map((issue) => {
     const classified = classifyIssue(issue);
     const paths = classified.references.map((r) => r.path);
-    const hash = contentHash(paths, io);
+    const hash = contentHash(paths, readIo);
     const key = { number: issue.number, updatedAt: issue.updatedAt, contentHash: hash };
 
     const hit = cache ? cacheGet(cache, key) : null;
     const verified = hit
       ? { number: issue.number, route: hit.route, verdict: hit.verdict, evidence: hit.evidence ?? null }
-      : verifyIssue(classified, io);
+      : verifyIssue(classified, readIo);
     if (cache && !hit) cachePut(cache, key, { route: verified.route, verdict: verified.verdict, evidence: verified.evidence });
 
     return { ...issue, classified, verified, contentHash: hash, cached: Boolean(hit) };

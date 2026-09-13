@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process';
  * @param {{readFile?: Function}} [io]
  * @returns {string|null} hex digest, or null when there is nothing to hash
  */
-export function contentHash(paths, { readFile = (p) => readFileAtHead(p) } = {}) {
+export function contentHash(paths, { revision = 'HEAD', readFile = (p) => readFileAtHead(p, revision) } = {}) {
   const unique = [...new Set(paths ?? [])].sort();
   if (unique.length === 0) return null;
 
@@ -55,6 +55,6 @@ export function contentHash(paths, { readFile = (p) => readFileAtHead(p) } = {})
 }
 
 /** Read `path` as of HEAD; throws when it is absent there. */
-function readFileAtHead(path, run = execFileSync) {
-  return String(run('git', ['show', `HEAD:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
+function readFileAtHead(path, rev = 'HEAD', run = execFileSync) {
+  return String(run('git', ['show', `${rev}:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
 }

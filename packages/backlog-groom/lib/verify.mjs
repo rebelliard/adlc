@@ -104,14 +104,14 @@ export function matchSnippet(content, snippet) {
  * Reading through git also makes a run reproducible: two people on the same
  * commit get the same answer whatever their working trees look like.
  */
-function defaultReadFileAtHead(path, run = execFileSync) {
-  return String(run('git', ['show', `HEAD:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
+function defaultReadFileAtHead(path, rev = 'HEAD', run = execFileSync) {
+  return String(run('git', ['show', `${rev}:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
 }
 
 /** Whether `path` exists AT HEAD — again, not in the working tree. */
-function defaultPathExistsAtHead(path, run = execFileSync) {
+function defaultPathExistsAtHead(path, rev = 'HEAD', run = execFileSync) {
   try {
-    run('git', ['cat-file', '-e', `HEAD:${path}`], { stdio: ['ignore', 'ignore', 'ignore'] });
+    run('git', ['cat-file', '-e', `${rev}:${path}`], { stdio: ['ignore', 'ignore', 'ignore'] });
     return true;
   } catch {
     return false;
@@ -169,8 +169,13 @@ function defaultEverExisted(path, run = execFileSync) {
  */
 export function verifyIssue(classified, io = {}) {
   const {
-    readFile = (p) => defaultReadFileAtHead(p),
-    pathExists = (p) => defaultPathExistsAtHead(p),
+    // `revision` is resolved ONCE by the caller and threaded here. Re-reading
+    // `HEAD` per file lets another checkout move the branch mid-run, so the set
+    // would claim one revision while holding evidence from another — and cache a
+    // verdict from the later revision under the earlier one's hash.
+    revision = 'HEAD',
+    readFile = (p) => defaultReadFileAtHead(p, revision),
+    pathExists = (p) => defaultPathExistsAtHead(p, revision),
     lastCommitFor = (p) => defaultLastCommitFor(p),
     everExisted = (p) => defaultEverExisted(p),
   } = io;
@@ -196,9 +201,19 @@ export function verifyIssue(classified, io = {}) {
       outcomes.push({ verdict: 'moved', evidence: { path: ref.path, citedLine: ref.line, reason: 'the cited path existed and no longer does' } });
       continue;
     }
-    const snippets = ref.snippets ?? (ref.snippet ? [ref.snippet] : []);
+    // An EMPTY or whitespace-only fence is discarded before matching. It
+    // normalises to zero lines, which the matcher reports as `none`, which maps
+    // to `fixed` — a close candidate manufactured from a malformed citation
+    // carrying no evidence at all.
+    const declared = ref.snippets ?? (ref.snippet ? [ref.snippet] : []);
+    const snippets = declared.filter((sn) => String(sn ?? '').trim().length > 0);
     if (snippets.length === 0) {
-      outcomes.push({ verdict: 'unverifiable', reason: `no snippet to compare for ${ref.path}` });
+      outcomes.push({
+        verdict: 'unverifiable',
+        reason: declared.length > 0
+          ? `${ref.path} is cited with an empty excerpt — nothing to compare`
+          : `no snippet to compare for ${ref.path}`,
+      });
       continue;
     }
     let content;

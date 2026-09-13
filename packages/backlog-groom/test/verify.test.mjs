@@ -352,3 +352,27 @@ test('AC1: verification reads HEAD, not the working tree', () => {
   assert.ok(reads.includes('a.mjs'));
   assert.notEqual(workingTree, headContent);
 });
+
+test('AC1: an EMPTY or whitespace-only fence is not evidence — never fixed', () => {
+  // Raised in cross-model review, and the worst shape yet: an empty fence
+  // normalises to zero lines, the matcher reports `none`, and `none` mapped
+  // straight to `fixed`. A malformed citation manufactured a close candidate
+  // carrying no evidence whatsoever, on a bug still in the file.
+  for (const empty of ['', '   ', '\n\n']) {
+    const v = verifyIssue(
+      mechanical([{ path: 'a.mjs', line: 1, snippets: [empty] }]),
+      world({ 'a.mjs': 'the bug is still right here\n' })
+    );
+    assert.notEqual(v.verdict, 'fixed', `an empty fence (${JSON.stringify(empty)}) must not close anything`);
+    assert.equal(v.verdict, 'unverifiable');
+    assert.match(v.reason, /empty excerpt/);
+  }
+});
+
+test('AC1: an empty fence alongside a real one does not dilute the real verdict', () => {
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippets: ['', 'still here'] }]),
+    world({ 'a.mjs': 'still here\n' })
+  );
+  assert.equal(v.verdict, 'valid');
+});

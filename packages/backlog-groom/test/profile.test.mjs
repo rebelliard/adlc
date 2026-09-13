@@ -150,3 +150,27 @@ test('AC21: frozenPaths and autonomyFloor must hold non-empty strings', () => {
     assert.equal(e.isOpError, true, `${JSON.stringify(bad)} must be refused`);
   }
 });
+
+test('AC21: an empty areaPrefix is refused — it would make every label look like the area label', () => {
+  // Raised in cross-model review. With an empty prefix, `bug` reads as the area
+  // label, so a proposal would name an unrelated label as the one to replace and
+  // a consumer applying it would overwrite something it was never about.
+  const e = caught(() => parseProfile({ schemaVersion: 1, labels: { areaPrefix: '' } }));
+  assert.equal(e.isOpError, true);
+  assert.match(e.message, /areaPrefix/);
+  assert.equal(caught(() => parseProfile({ schemaVersion: 1, labels: { areaPrefix: 42 } })).isOpError, true);
+});
+
+test('AC21: priority labels must be non-empty strings, and unique across bands', () => {
+  // Two bands mapping to one label makes a relabel proposal meaningless: `from`
+  // and `to` would be the same string.
+  assert.equal(caught(() => parseProfile({ schemaVersion: 1, labels: { priority: { high: '' } } })).isOpError, true);
+  assert.equal(caught(() => parseProfile({ schemaVersion: 1, labels: { priority: { high: 1 } } })).isOpError, true);
+  const dup = caught(() => parseProfile({ schemaVersion: 1, labels: { priority: { high: 'P1', medium: 'P1' } } }));
+  assert.equal(dup.isOpError, true);
+  assert.match(dup.message, /more than one band/);
+});
+
+test('AC21: a provider role must name a non-empty string', () => {
+  assert.equal(caught(() => parseProfile({ schemaVersion: 1, providers: { decider: '' } })).isOpError, true);
+});
