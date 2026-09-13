@@ -17,18 +17,10 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { parseProfile } from '../lib/profile.mjs';
 import { groom } from '../lib/groom.mjs';
 import { renderReport } from '../lib/report.mjs';
+import { renderUsage } from '../lib/usage.mjs';
 
-const USAGE = `backlog-groom — groom a GitHub issue backlog against the code (read-only)
+const USAGE = renderUsage();
 
-  --profile <path>      profile JSON (default .claude/backlog-groom-profile.json)
-  --cache <path>        cache file (default .adlc/backlog-groom-cache.json; gitignored)
-  --no-cache            verify everything, ignoring and not writing the cache
-  --threshold <n>       relation candidate-filter threshold (default 0.2)
-  --json                emit the groomed set as JSON instead of the report
-  --out <path>          write the groomed set JSON to a file
-  --help
-
-This command never writes to GitHub.`;
 
 function opError(message) {
   console.error(`backlog-groom: ${message}`);

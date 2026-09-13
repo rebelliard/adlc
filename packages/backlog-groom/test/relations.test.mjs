@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { candidatePairs, emitRelations, RELATION_KINDS } from '../lib/relations.mjs';
+import { candidatePairs, emitRelations, similarity, RELATION_KINDS } from '../lib/relations.mjs';
 
 const ISSUES = [
   { number: 324, title: 'Full suite is flaky on developer machines', body: 'varying 2-4 segments fail, never in CI', labels: ['bug'] },
@@ -73,6 +73,14 @@ test('AC11: a judgment with no evidence beyond similarity is refused', () => {
   assert.deepEqual(scoreOnly.relations, [], 'evidence that merely restates the score is not evidence');
 });
 
+test('AC11: the three relation kinds are exactly these three', () => {
+  // Pinned as a literal, not iterated. A test that loops RELATION_KINDS shrinks
+  // with it: dropping `superseded-by` from the constant would delete the case
+  // that proves superseded-by is distinguishable, and the suite would stay
+  // green while the capability vanished.
+  assert.deepEqual([...RELATION_KINDS], ['duplicate-of', 'related-to', 'superseded-by']);
+});
+
 test('AC11: duplicate-of, related-to and superseded-by are distinguishable outcomes', () => {
   const { pairs } = candidatePairs(ISSUES, { threshold: 0.05 });
   for (const kind of RELATION_KINDS) {
@@ -123,4 +131,18 @@ test('AC19: an empty or single-issue backlog produces no pairs and a coherent st
     assert.equal(stats.pairsTotal, 0);
     assert.equal(stats.excludedRate, 0, 'nothing to exclude is not the same as excluding everything');
   }
+});
+
+test('AC19: stopwords carry no similarity — a shared "was" is not overlap', () => {
+  // The stopword list is load-bearing, not decorative: without it, two issues
+  // sharing only filler words surface as candidates and burn judgment calls.
+  const a = { number: 1, title: 'it was', body: 'this was that' };
+  const b = { number: 2, title: 'was it', body: 'that was this' };
+  assert.equal(similarity(a, b), 0, 'every shared token here is a stopword');
+});
+
+test('AC19: a real shared term does produce similarity, so the filter is not inert', () => {
+  const a = { number: 1, title: 'clone race in gate-deps', body: 'nested repository' };
+  const b = { number: 2, title: 'clone race elsewhere', body: 'nested repository' };
+  assert.ok(similarity(a, b) > 0);
 });

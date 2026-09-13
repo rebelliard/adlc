@@ -109,3 +109,11 @@ test('AC4: a response above the limit is still reported truncated', () => {
   const r = fetchIssues({ run: fakeRun(issueList(ISSUE_FETCH_LIMIT + 2)) });
   assert.equal(r.truncated, ISSUE_FETCH_LIMIT);
 });
+
+test('AC4: the fetch cap is 500 — the number appears in operator-facing output', () => {
+  // Pinned deliberately. ISSUE_FETCH_LIMIT is exported, and the report says
+  // "TRUNCATED at N" using it, so the value is part of what an operator reads
+  // and reasons about. It also matches the cap release-audit established, which
+  // is what makes two sweeps of the same backlog comparable.
+  assert.equal(ISSUE_FETCH_LIMIT, 500);
+});

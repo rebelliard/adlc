@@ -44,7 +44,10 @@ const CODE_CLAIM = [
  * produces only noise.
  */
 function isRepoRelative(path) {
-  if (path.startsWith('/')) return false;
+  // No leading-slash check here: `/` is outside the path character class, so a
+  // captured path can never begin with one. Absolute paths are rejected by the
+  // preceding-character test at the match site, which is the only place that
+  // CAN see the slash. A second check here would be unreachable code.
   const segments = path.split('/');
   return !segments.includes('..') && !segments.includes('.');
 }

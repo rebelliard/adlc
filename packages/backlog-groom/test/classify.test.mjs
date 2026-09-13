@@ -131,3 +131,13 @@ test('AC2: absolute paths and dot segments are never references', () => {
   assert.deepEqual(parseReferences('see ./local/thing.mjs for it'), []);
   assert.deepEqual(parseReferences('see ../up/thing.mjs for it'), []);
 });
+
+test('AC2: an extension containing a digit is still a path — .mp4, .v2.json, .h5', () => {
+  // The extension character class must cover the whole digit range. A narrowed
+  // one silently stops recognising these as citations, which is a verification
+  // downgrade with no signal: the issue quietly routes to `model` instead.
+  for (const path of ['assets/clip.mp4', 'packages/x/schema.v2.json', 'data/store.h5']) {
+    const refs = parseReferences(`the bug is in \`${path}\` somewhere`);
+    assert.equal(refs[0]?.path, path, `${path} must parse as a reference`);
+  }
+});
