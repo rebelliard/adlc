@@ -1,0 +1,107 @@
+// classify.test.mjs — AC2.
+//
+// Routing decides HOW an issue will be checked, not what it concludes (§3.2 vs
+// §3.3). `unverifiable` is a first-class route: collapsing it into "still valid"
+// is the specific false-green this design exists to avoid, because it lets a
+// sweep under-report while appearing to have examined everything.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { classifyIssue, parseReferences } from '../lib/classify.mjs';
+
+const AUDIT_BODY = [
+  '**Source:** `/release-audit` for @adlc 1.11.0, class **false-green**.',
+  '',
+  '**Location** `plugins/adlc-pi/lib/gate-tool.mjs:134`',
+  '',
+  '```',
+  "const code = typeof res?.code === 'number' ? res.code : 1;",
+  '```',
+  '',
+  'So a gate that hangs returns `code === 0`.',
+].join('\n');
+
+test('AC2: the audit body shape routes mechanical, with path, line and snippet captured', () => {
+  const c = classifyIssue({ number: 1, title: 't', body: AUDIT_BODY, labels: [] });
+  assert.equal(c.route, 'mechanical');
+  const ref = c.references[0];
+  assert.equal(ref.path, 'plugins/adlc-pi/lib/gate-tool.mjs');
+  assert.equal(ref.line, 134);
+  assert.match(ref.snippet, /const code = typeof/, 'the fenced block is attributed to the nearest preceding path');
+});
+
+test('AC2: an inline path:line with no fence still routes mechanical — existence is checkable', () => {
+  const c = classifyIssue({ number: 2, title: 't', body: 'The bug is at `packages/core/lib/text.mjs:37` and never fires.', labels: [] });
+  assert.equal(c.route, 'mechanical');
+  assert.equal(c.references[0].path, 'packages/core/lib/text.mjs');
+  assert.equal(c.references[0].line, 37);
+  assert.equal(c.references[0].snippet, null, 'no fence means nothing to compare — verify decides what that implies');
+});
+
+test('AC2: a checkable claim with no parseable reference routes to model', () => {
+  const body = 'The `resolveModel` helper returns the wrong tier when the provider is unset. Seems to be in the router.';
+  const c = classifyIssue({ number: 3, title: 'router picks the wrong tier', body, labels: [] });
+  assert.equal(c.route, 'model', 'code identifiers are a checkable claim even without a path');
+  assert.deepEqual(c.references, []);
+});
+
+test('AC2: an issue with no checkable claim about code routes to unverifiable', () => {
+  const body = 'We should discuss the roadmap for next quarter and decide what matters most to users.';
+  const c = classifyIssue({ number: 4, title: 'plan the quarter', body, labels: [] });
+  assert.equal(c.route, 'unverifiable');
+  assert.deepEqual(c.references, []);
+});
+
+test('AC2: an empty body is unverifiable, never mechanical', () => {
+  for (const body of ['', '   ', null, undefined]) {
+    const c = classifyIssue({ number: 5, title: 'no body', body, labels: [] });
+    assert.equal(c.route, 'unverifiable', `body ${JSON.stringify(body)} must not be mechanical`);
+  }
+});
+
+test('AC2: a title-only code signal is enough for model, and never for mechanical', () => {
+  const c = classifyIssue({ number: 6, title: 'fence() drops the tag when maxChars is 0', body: 'It is wrong.', labels: [] });
+  assert.equal(c.route, 'model');
+});
+
+test('AC2: prose that merely mentions a version or a date is not a code claim', () => {
+  // The failure mode is over-routing to `model`: every issue then costs a model
+  // call and the cheap path never runs.
+  const c = classifyIssue({ number: 7, title: 'release 1.11.0 on 2026-09-13', body: 'Ship it on Friday, 1.11.0, after the standup.', labels: [] });
+  assert.equal(c.route, 'unverifiable');
+});
+
+test('AC2: a URL containing a path is not a code reference', () => {
+  // A GitHub permalink is a link, not a claim that this repo has that file at
+  // that line; treating it as one invents references from link text.
+  const body = 'See https://github.com/voodootikigod/adlc/blob/main/packages/core/lib/text.mjs:37 for context.';
+  const c = classifyIssue({ number: 8, title: 't', body, labels: [] });
+  assert.notEqual(c.references[0]?.path, 'packages/core/lib/text.mjs');
+});
+
+test('AC2: parseReferences dedupes the same path:line cited twice', () => {
+  const body = 'at `lib/a.mjs:3` ... and again at `lib/a.mjs:3`';
+  const refs = parseReferences(body);
+  assert.equal(refs.length, 1);
+});
+
+test('AC2: a path cited without a line is captured, with line null', () => {
+  const refs = parseReferences('the whole of `packages/parallax/lib/modes.mjs` is wrong');
+  assert.equal(refs[0].path, 'packages/parallax/lib/modes.mjs');
+  assert.equal(refs[0].line, null);
+});
+
+test('AC2: a fence not preceded by any path is not attributed to one', () => {
+  const body = ['Some prose.', '```', 'const x = 1;', '```'].join('\n');
+  const refs = parseReferences(body);
+  assert.deepEqual(refs, [], 'an unattributed fence is not a code reference — it has no file to check against');
+});
+
+test('AC2: every route is exactly one of the three, for every input', () => {
+  const bodies = [AUDIT_BODY, 'the `foo()` helper', 'plan the quarter', '', '`a/b.mjs:1`'];
+  for (const body of bodies) {
+    const c = classifyIssue({ number: 9, title: '', body, labels: [] });
+    assert.ok(['mechanical', 'model', 'unverifiable'].includes(c.route), `unexpected route ${c.route}`);
+  }
+});
