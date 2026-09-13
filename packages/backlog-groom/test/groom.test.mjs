@@ -93,6 +93,13 @@ test('an unconsultable fetch short-circuits before any verification', () => {
   assert.equal(w.reads.length, 0);
 });
 
+test('the global citation budget is 5000 — the sweep-wide work ceiling', () => {
+  // Pinned like the other operator-visible bounds. At roughly three synchronous
+  // git subprocesses per citation this is already ~15,000 of them, which is the
+  // most a routine maintenance run should ever spend.
+  assert.equal(MAX_TOTAL_REFERENCES, 5000);
+});
+
 test('a sweep enforces a GLOBAL citation budget, and says the run was incomplete', () => {
   // The per-issue cap bounds one hostile body; this bounds the backlog. Without
   // it, 500 issues at 50 citations each is 25,000 references and roughly three

@@ -198,3 +198,16 @@ test('AC10: a cache entry claiming an UNKNOWN verdict or route is a miss', () =>
 
   assert.equal(cacheGet(store, key)?.verdict, 'valid', 'a well-formed entry still hits');
 });
+
+test('AC10: every verdict the verifier can produce is cacheable — including unverified', () => {
+  // A missing member would silently make that verdict uncacheable: the entry is
+  // written, never served, and the issue is re-verified every run while the
+  // cache appears to be working. `unverified` is the model route's verdict, so
+  // dropping it would quietly disable caching for that whole route.
+  for (const verdict of ['valid', 'fixed', 'moved', 'unverifiable', 'unverified']) {
+    const key = { number: 20, updatedAt: 'T1', contentHash: 'h1' };
+    const store = {};
+    cachePut(store, key, { verdict, route: 'mechanical' });
+    assert.equal(cacheGet(store, key)?.verdict, verdict, `${verdict} must round-trip through the cache`);
+  }
+});
