@@ -284,3 +284,71 @@ test('AC1: a partial excerpt still outranks a wholly-absent one', () => {
   );
   assert.equal(v.verdict, 'unverifiable', 'partial survival never closes');
 });
+
+test('AC1: an UNVERIFIABLE citation outranks a fixed one — a close needs complete evidence', () => {
+  // Raised in cross-model review. An issue cites two locations: one snippet is
+  // gone, the other has no excerpt at all. That issue has NOT been shown fixed —
+  // one citation was never checked — and returning `fixed` would close on
+  // incomplete evidence.
+  const v = verifyIssue(
+    mechanical([
+      { path: 'gone.mjs', line: 1, snippets: ['vanished'] },
+      { path: 'other.mjs', line: 2, snippets: [] },
+    ]),
+    world({ 'gone.mjs': 'nothing\n', 'other.mjs': 'anything\n' })
+  );
+  assert.equal(v.verdict, 'unverifiable');
+  assert.notEqual(v.verdict, 'fixed');
+});
+
+test('AC1: an unreadable sibling citation also prevents fixed', () => {
+  const w = world({ 'gone.mjs': 'nothing\n', 'locked.mjs': 'x' });
+  const realRead = w.readFile;
+  w.readFile = (p) => {
+    if (p === 'locked.mjs') throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    return realRead(p);
+  };
+  const v = verifyIssue(
+    mechanical([
+      { path: 'gone.mjs', line: 1, snippets: ['vanished'] },
+      { path: 'locked.mjs', line: 1, snippets: ['something'] },
+    ]),
+    w
+  );
+  assert.equal(v.verdict, 'unverifiable', 'a citation we could not read is not evidence of a fix');
+});
+
+test('AC1: a clean fixed — every citation checked and all gone — still verifies fixed', () => {
+  const v = verifyIssue(
+    mechanical([
+      { path: 'a.mjs', line: 1, snippets: ['gone one'] },
+      { path: 'b.mjs', line: 1, snippets: ['gone two'] },
+    ]),
+    world({ 'a.mjs': 'nothing\n', 'b.mjs': 'nothing\n' })
+  );
+  assert.equal(v.verdict, 'fixed', 'the precedence must not make fixed unreachable');
+});
+
+test('AC1: verification reads HEAD, not the working tree', () => {
+  // Raised in cross-model review, and it is a false-close path. The contract is
+  // verification against HEAD; reading the filesystem lets a developer's
+  // uncommitted edit decide the verdict. Someone part-way through a fix — the
+  // snippet deleted locally, nothing committed — would see `fixed` and hand the
+  // write path a close proposal for a bug still in the repository.
+  //
+  // Asserted by giving the two seams DIFFERENT answers and checking which one
+  // the verdict followed.
+  const headContent = `${SNIPPET}\n`;
+  const workingTree = 'the developer deleted it locally\n';
+  const reads = [];
+  const io = {
+    readFile: (p) => { reads.push(p); return headContent; },  // stands in for HEAD
+    pathExists: () => true,
+    lastCommitFor: () => 'abc',
+    everExisted: () => true,
+  };
+  const v = verifyIssue(mechanical([{ path: 'a.mjs', line: 1, snippets: [SNIPPET] }]), io);
+  assert.equal(v.verdict, 'valid', 'the committed content decides, not the working copy');
+  assert.ok(reads.includes('a.mjs'));
+  assert.notEqual(workingTree, headContent);
+});

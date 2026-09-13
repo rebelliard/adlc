@@ -17,17 +17,21 @@
  * the empty string. That distinction is load-bearing: §4 forbids caching such an
  * issue as `valid`, because a key with no code component can never be
  * invalidated by a code change.
+ *
+ * Bytes are read AT HEAD, matching verification. Hashing the working tree would
+ * key the cache on uncommitted edits, so a verdict computed from HEAD would be
+ * stored under a key describing someone's half-finished change.
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 /**
  * @param {string[]} paths - referenced repo-relative paths
  * @param {{readFile?: Function}} [io]
  * @returns {string|null} hex digest, or null when there is nothing to hash
  */
-export function contentHash(paths, { readFile = (p) => readFileSync(p, 'utf8') } = {}) {
+export function contentHash(paths, { readFile = (p) => readFileAtHead(p) } = {}) {
   const unique = [...new Set(paths ?? [])].sort();
   if (unique.length === 0) return null;
 
@@ -48,4 +52,9 @@ export function contentHash(paths, { readFile = (p) => readFileSync(p, 'utf8') }
     h.update(bytes);
   }
   return h.digest('hex');
+}
+
+/** Read `path` as of HEAD; throws when it is absent there. */
+function readFileAtHead(path, run = execFileSync) {
+  return String(run('git', ['show', `HEAD:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
 }

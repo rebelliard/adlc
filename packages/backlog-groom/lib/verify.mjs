@@ -19,7 +19,6 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Normalise for comparison: trim each line and collapse internal whitespace
@@ -92,6 +91,42 @@ export function matchSnippet(content, snippet) {
   return { kind, firstLine, matched, total: needle.length };
 }
 
+/**
+ * Read `path` AS OF HEAD, not from the working tree.
+ *
+ * Raised in cross-model review, and it is a false-close path: the contract says
+ * verification is against HEAD, but reading the filesystem means a developer's
+ * uncommitted edit decides the verdict. Someone part-way through a fix — the
+ * snippet deleted locally, nothing committed — would have the tool report
+ * `fixed` and hand the write path a close proposal for a bug that is still in
+ * the repository.
+ *
+ * Reading through git also makes a run reproducible: two people on the same
+ * commit get the same answer whatever their working trees look like.
+ */
+function defaultReadFileAtHead(path, run = execFileSync) {
+  return String(run('git', ['show', `HEAD:${path}`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] }));
+}
+
+/** Whether `path` exists AT HEAD — again, not in the working tree. */
+function defaultPathExistsAtHead(path, run = execFileSync) {
+  try {
+    run('git', ['cat-file', '-e', `HEAD:${path}`], { stdio: ['ignore', 'ignore', 'ignore'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The commit HEAD points at, so a run can say what it described. */
+export function headCommit(run = execFileSync) {
+  try {
+    return String(run('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** The commit that last touched `path`, or null when git cannot say. */
 function defaultLastCommitFor(path, run = execFileSync) {
   try {
@@ -134,8 +169,8 @@ function defaultEverExisted(path, run = execFileSync) {
  */
 export function verifyIssue(classified, io = {}) {
   const {
-    readFile = (p) => readFileSync(p, 'utf8'),
-    pathExists = (p) => existsSync(p),
+    readFile = (p) => defaultReadFileAtHead(p),
+    pathExists = (p) => defaultPathExistsAtHead(p),
     lastCommitFor = (p) => defaultLastCommitFor(p),
     everExisted = (p) => defaultEverExisted(p),
   } = io;
@@ -215,9 +250,22 @@ export function verifyIssue(classified, io = {}) {
     }
   }
 
-  for (const want of ['moved', 'valid', 'fixed']) {
+  // PRECEDENCE, and every step of it fails towards NOT closing:
+  //   moved > valid > unverifiable > fixed
+  //
+  // `unverifiable` outranking `fixed` is the subtle one, raised in cross-model
+  // review. An issue citing two locations — one whose snippet is gone, one with
+  // no excerpt or temporarily unreadable — has NOT been shown to be fixed: one
+  // citation could not be checked at all. Returning `fixed` there would close on
+  // incomplete evidence, which is the same defect as closing on a shifted line,
+  // reached by a different route.
+  for (const want of ['moved', 'valid', 'unverifiable', 'fixed']) {
     const hit = outcomes.find((o) => o.verdict === want);
-    if (hit) return { number, route, verdict: want, evidence: hit.evidence ?? null };
+    if (!hit) continue;
+    if (want === 'unverifiable') {
+      return { number, route, verdict: 'unverifiable', evidence: null, reason: hit.reason ?? 'a citation could not be checked' };
+    }
+    return { number, route, verdict: want, evidence: hit.evidence ?? null };
   }
 
   const why = outcomes.find((o) => o.reason)?.reason ?? 'no citation could be checked';

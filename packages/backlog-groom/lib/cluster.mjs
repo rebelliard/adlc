@@ -45,13 +45,19 @@ export function clusterIssues(rows, units) {
   const byUnit = new Map();
   const unclustered = [];
   for (const row of rows ?? []) {
-    const [first] = unitsForIssue(row.verified, row.classified, units);
-    if (!first) {
+    const inUnits = unitsForIssue(row.verified, row.classified, units);
+    // An issue whose verified locations span SEVERAL units is ambiguous, and is
+    // left unclustered with its units recorded — the same policy §3.4a already
+    // applies to area relabels. Silently filing it under whichever path parsed
+    // first would hand a lane package-spanning work labelled as belonging to one
+    // package, and hide the other owner entirely.
+    if (inUnits.length !== 1) {
       unclustered.push(row.number);
       continue;
     }
-    if (!byUnit.has(first)) byUnit.set(first, []);
-    byUnit.get(first).push(row.number);
+    const [unit] = inUnits;
+    if (!byUnit.has(unit)) byUnit.set(unit, []);
+    byUnit.get(unit).push(row.number);
   }
   return {
     clusters: [...byUnit.entries()]

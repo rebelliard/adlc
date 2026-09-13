@@ -86,3 +86,22 @@ test('**/ is a DIRECTORY boundary — packages/**/a.mjs does not match packages/
   assert.equal(globMatch('packages/**/a.mjs', 'packages/xa.mjs'), false);
   assert.ok(globMatch('packages/**/a.mjs', 'packages/x/a.mjs'));
 });
+
+test('an issue spanning SEVERAL units is unclustered, not filed under the first', () => {
+  // Raised in cross-model review, and it aligns clustering with the policy
+  // §3.4a already applies: multi-unit locations are ambiguous. Filing such an
+  // issue under whichever path parsed first hands a lane package-spanning work
+  // labelled as one package's, and hides the other owner.
+  const units = [
+    { name: 'core', paths: ['packages/core/**'] },
+    { name: 'prosecute', paths: ['packages/prosecute/**'] },
+  ];
+  const rows = [{
+    number: 7,
+    verified: { verdict: 'valid' },
+    classified: { references: [{ path: 'packages/core/a.mjs' }, { path: 'packages/prosecute/b.mjs' }] },
+  }];
+  const { clusters, unclustered } = clusterIssues(rows, units);
+  assert.deepEqual(clusters, []);
+  assert.deepEqual(unclustered, [7]);
+});

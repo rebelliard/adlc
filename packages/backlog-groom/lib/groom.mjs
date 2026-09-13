@@ -13,7 +13,7 @@
 
 import { fetchIssues } from './fetch.mjs';
 import { classifyIssue } from './classify.mjs';
-import { verifyIssue } from './verify.mjs';
+import { verifyIssue, headCommit } from './verify.mjs';
 import { contentHash } from './content-hash.mjs';
 import { cacheGet, cachePut } from './cache.mjs';
 import { clusterIssues, unitsForIssue } from './cluster.mjs';
@@ -35,6 +35,10 @@ import { globMatch } from './cluster.mjs';
  * @param {object} [o.io] - fetch/fs/git seams
  */
 export function groom({ profile, cache = null, judge = null, io = {}, relationThreshold = 0.2, generatedFor = null } = {}) {
+  // What the run actually described. Verification reads HEAD rather than the
+  // working tree, so the emitted set names the commit it read — without it a
+  // consumer cannot tell which revision a verdict refers to.
+  const describedCommit = generatedFor ?? (io.headCommit ? io.headCommit() : headCommit());
   const { issues, unconsultable, truncated } = io.fetchIssues ? io.fetchIssues() : fetchIssues(io);
   if (unconsultable) {
     // An unconsultable fetch is not an empty backlog. Returning a normal-looking
@@ -81,7 +85,7 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
   const proposals = relabelProposals(rows, profile);
 
   const set = emitGroomedSet({
-    generatedFor,
+    generatedFor: describedCommit,
     coverage: coverageOf(rows, { truncated }),
     truncated,
     rows,
