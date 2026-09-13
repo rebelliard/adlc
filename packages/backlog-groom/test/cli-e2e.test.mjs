@@ -84,3 +84,27 @@ test('a gh failure exits 1 and says the backlog was unconsultable — never an e
   assert.match(r.stderr, /gh issue list failed/);
   assert.doesNotMatch(r.stdout, /Examined 0 issue/, 'a failed fetch must not render as a clean, empty backlog');
 });
+
+test('a LARGE --json payload survives being piped — no truncation on exit', () => {
+  // Raised in cross-model review. `console.log` to a pipe is asynchronous, and a
+  // 500-issue groomed set comfortably exceeds the pipe buffer; forcing
+  // process.exit terminates before stdout drains and the consumer gets an
+  // unparseable fragment. The test needs a payload big enough to exceed the
+  // buffer, or it passes whatever the code does.
+  const many = Array.from({ length: 500 }, (_, i) => ({
+    number: i + 1,
+    title: `issue ${i + 1} with a deliberately long title so the payload exceeds a pipe buffer`,
+    body: `prose about nothing in particular, repeated to add bulk. ${'x'.repeat(400)}`,
+    labels: [{ name: 'bug' }],
+    url: `https://example.invalid/${i + 1}`,
+    updatedAt: '2026-09-13T00:00:00Z',
+  }));
+  const box = sandbox(many);
+  const r = run(['--json', '--no-cache'], box);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.length > 65536, `payload must exceed a pipe buffer to be a real test (got ${r.stdout.length})`);
+
+  const parsed = JSON.parse(r.stdout); // throws on a truncated document
+  assert.equal(parsed.issues.length, 500, 'every issue must survive the pipe');
+  assert.equal(parsed.coverage.total, 500);
+});

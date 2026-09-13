@@ -161,7 +161,8 @@ export function verifyIssue(classified, io = {}) {
       outcomes.push({ verdict: 'moved', evidence: { path: ref.path, citedLine: ref.line, reason: 'the cited path existed and no longer does' } });
       continue;
     }
-    if (!ref.snippet) {
+    const snippets = ref.snippets ?? (ref.snippet ? [ref.snippet] : []);
+    if (snippets.length === 0) {
       outcomes.push({ verdict: 'unverifiable', reason: `no snippet to compare for ${ref.path}` });
       continue;
     }
@@ -172,7 +173,16 @@ export function verifyIssue(classified, io = {}) {
       outcomes.push({ verdict: 'unverifiable', reason: `${ref.path} is unreadable: ${err.code ?? err.message}` });
       continue;
     }
-    const m = matchSnippet(content, ref.snippet);
+    // EVERY excerpt attached to this citation is evaluated, and the best
+    // outcome wins: a single surviving excerpt means the cited code is still
+    // there, whatever happened to the others. Judging only one excerpt is how an
+    // issue that quotes a location twice — once removed, once live — verifies
+    // `fixed` and gets closed.
+    const matches = snippets.map((sn) => matchSnippet(content, sn));
+    const best = matches.find((x) => x.kind === 'all')
+      ?? matches.find((x) => x.kind === 'partial')
+      ?? matches[0];
+    const m = best;
     if (m.kind === 'none') {
       outcomes.push({
         verdict: 'fixed',
@@ -180,7 +190,9 @@ export function verifyIssue(classified, io = {}) {
           path: ref.path,
           citedLine: ref.line,
           commit: lastCommitFor(ref.path),
-          reason: 'no line of the cited snippet survives anywhere in the file',
+          reason: snippets.length > 1
+            ? `no line of any of the ${snippets.length} cited excerpts survives anywhere in the file`
+            : 'no line of the cited snippet survives anywhere in the file',
         },
       });
     } else if (m.kind === 'partial') {

@@ -254,3 +254,33 @@ test('AC1: a single-character line is part of the citation — a lone brace is n
   assert.notEqual(braceOnly.verdict, 'valid', 'a different body must not match just because the braces do');
   assert.equal(braceOnly.verdict, 'unverifiable', 'one shared line of three is partial survival, which never closes');
 });
+
+test('AC1: one live excerpt among several prevents fixed — every excerpt is judged', () => {
+  // Raised in cross-model review. An issue that cites one location twice — a
+  // first excerpt since removed, a second describing the still-live defect —
+  // must not verify `fixed`. Judging only the first excerpt produces a false
+  // close on an open bug.
+  const file = 'the second excerpt lives here\nand more\n';
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 10, snippets: ['long gone line', 'the second excerpt lives here'] }]),
+    world({ 'a.mjs': file })
+  );
+  assert.equal(v.verdict, 'valid');
+});
+
+test('AC1: fixed requires EVERY excerpt to be gone, and says how many it checked', () => {
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippets: ['gone one', 'gone two'] }]),
+    world({ 'a.mjs': 'nothing related\n' })
+  );
+  assert.equal(v.verdict, 'fixed');
+  assert.match(v.evidence.reason, /2 cited excerpts/);
+});
+
+test('AC1: a partial excerpt still outranks a wholly-absent one', () => {
+  const v = verifyIssue(
+    mechanical([{ path: 'a.mjs', line: 1, snippets: ['utterly absent', 'kept line\nvanished line'] }]),
+    world({ 'a.mjs': 'kept line\n' })
+  );
+  assert.equal(v.verdict, 'unverifiable', 'partial survival never closes');
+});

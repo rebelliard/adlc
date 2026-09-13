@@ -98,16 +98,26 @@ export function parseReferences(body) {
       if (p.at < f.index) owner = p;
       else break;
     }
-    if (owner && !owner.snippet) owner.snippet = f[1].trim();
+    // EVERY excerpt is kept, not just the first. An issue that quotes one
+    // location twice — a removed excerpt and a still-live one — would otherwise
+    // lose the live excerpt and verify `fixed`, which is a false close.
+    if (owner) (owner.snippets ??= []).push(f[1].trim());
   }
 
-  const seen = new Set();
+  const seen = new Map();
   const out = [];
   for (const p of paths) {
     const key = `${p.path}:${p.line ?? ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ path: p.path, line: p.line, snippet: p.snippet ?? null });
+    const existing = seen.get(key);
+    if (existing) {
+      // A repeated citation MERGES its excerpts rather than being dropped:
+      // dedupe must not discard evidence.
+      existing.snippets.push(...(p.snippets ?? []));
+      continue;
+    }
+    const ref = { path: p.path, line: p.line, snippets: [...(p.snippets ?? [])] };
+    seen.set(key, ref);
+    out.push(ref);
   }
   return out;
 }

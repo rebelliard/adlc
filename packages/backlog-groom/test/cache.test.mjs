@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { contentHash } from '../lib/content-hash.mjs';
-import { cacheGet, cachePut, cacheKeyFor } from '../lib/cache.mjs';
+import { CACHE_SCHEMA_VERSION, cacheGet, cachePut, cacheKeyFor } from '../lib/cache.mjs';
 
 const files = { 'a.mjs': 'alpha\n', 'b.mjs': 'beta\n', 'c.mjs': 'gamma\n' };
 const read = (p) => {
@@ -124,4 +124,24 @@ test('AC10: a null cache entry is a miss, not a crash', () => {
   // throws, taking the whole sweep down over a corrupt cache.
   const store = { 6: null };
   assert.equal(cacheGet(store, { number: 6, updatedAt: 'T1', contentHash: 'h1' }), null);
+});
+
+test('AC10: a cache written under an older schema version is a MISS, not a stale verdict', () => {
+  // Raised in cross-model review, and it is this package's own failure mode
+  // turned inward: an older release stores a wrong verdict, a newer release
+  // fixes the verifier, and with unchanged issue text and file bytes the fixed
+  // code would never run. The version participates in the key, so an upgrade
+  // recomputes rather than inheriting.
+  const key = { number: 9, updatedAt: 'T1', contentHash: 'h1' };
+  const store = {};
+  cachePut(store, key, { verdict: 'valid', route: 'mechanical' });
+  const current = store['9'].key;
+
+  const stale = { '9': { verdict: 'valid', route: 'mechanical', key: current.replace(/^v\d+:\d+/, 'v1:1') } };
+  assert.equal(cacheGet(stale, key), null, 'an older-version entry must be recomputed');
+  assert.equal(cacheGet(store, key)?.verdict, 'valid', 'the current version still hits');
+});
+
+test('AC10: the schema version is part of the key, so two versions cannot collide', () => {
+  assert.match(cacheKeyFor({ updatedAt: 'T', contentHash: 'h' }), new RegExp(`^v\\\\d+:${CACHE_SCHEMA_VERSION}\\\\|`));
 });

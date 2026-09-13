@@ -15,11 +15,27 @@
  * A miss is the ABSENCE of an answer, never an optimistic one.
  */
 
+/**
+ * Bump when verification, parsing or verdict semantics change.
+ *
+ * Raised in cross-model review, and it is the same failure this package exists
+ * to detect, turned inward: without it, an older release stores a wrong verdict,
+ * a newer release fixes the verifier, and the fixed code never runs — the issue
+ * text and the file bytes are unchanged, so the key still matches and the stale
+ * verdict is served indefinitely. Every fix to the verifier that this version
+ * does not accompany is a fix that does not reach a cached backlog.
+ *
+ * 2: excerpts became a list per citation and are aggregated conservatively, so
+ *    verdicts computed under the single-excerpt rule are no longer trustworthy.
+ */
+export const CACHE_SCHEMA_VERSION = 2;
+
 /** Unambiguous composite key: length-delimited so two fields cannot alias. */
 export function cacheKeyFor({ updatedAt, contentHash }) {
   const u = String(updatedAt ?? '');
   const c = contentHash == null ? '' : String(contentHash);
-  return `${u.length}:${u}|${c.length}:${c}`;
+  const v = String(CACHE_SCHEMA_VERSION);
+  return `v${v.length}:${v}|${u.length}:${u}|${c.length}:${c}`;
 }
 
 /**

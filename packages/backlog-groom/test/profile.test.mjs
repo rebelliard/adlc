@@ -120,3 +120,33 @@ test('AC21: both provider roles are known keys — decider and reviewer', () => 
   const p = parseProfile({ schemaVersion: 1, providers: { decider: 'anthropic', reviewer: 'openai' } });
   assert.deepEqual(p.providers, { decider: 'anthropic', reviewer: 'openai' });
 });
+
+test('AC21: a malformed UNIT is refused — a pathsx typo must not silently disable a unit', () => {
+  // Raised in cross-model review. Validating only that `units` is an array let a
+  // typo through: the unit matched nothing, its issues fell out of every cluster,
+  // its area relabel proposals were suppressed, and the run still looked healthy.
+  const typo = caught(() => parseProfile({ schemaVersion: 1, units: [{ name: 'x', pathsx: ['a/**'] }] }));
+  assert.equal(typo.isOpError, true);
+  assert.match(typo.message, /pathsx/);
+
+  for (const bad of [
+    { units: [{ name: 'x' }] },
+    { units: [{ name: 'x', paths: [] }] },
+    { units: [{ paths: ['a/**'] }] },
+    { units: [{ name: '', paths: ['a/**'] }] },
+    { units: [{ name: 'x', paths: [42] }] },
+    { units: ['not an object'] },
+  ]) {
+    const e = caught(() => parseProfile({ schemaVersion: 1, ...bad }), `${JSON.stringify(bad)} must be refused`);
+    assert.equal(e.isOpError, true, `${JSON.stringify(bad)} must be an operational error`);
+  }
+
+  assert.doesNotThrow(() => parseProfile({ schemaVersion: 1, units: [{ name: 'x', paths: ['a/**'] }] }));
+});
+
+test('AC21: frozenPaths and autonomyFloor must hold non-empty strings', () => {
+  for (const bad of [{ frozenPaths: [1] }, { frozenPaths: [''] }, { autonomyFloor: [null] }]) {
+    const e = caught(() => parseProfile({ schemaVersion: 1, ...bad }));
+    assert.equal(e.isOpError, true, `${JSON.stringify(bad)} must be refused`);
+  }
+});

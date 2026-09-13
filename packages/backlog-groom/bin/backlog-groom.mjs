@@ -19,12 +19,29 @@ import { renderReport } from '../lib/report.mjs';
 import { renderUsage, parseOptions, validateThreshold } from '../lib/usage.mjs';
 import { loadProfile, loadCache, saveCache, serialiseJson } from '../lib/io.mjs';
 
+process.on('uncaughtException', (err) => {
+  // An opError has already printed its message and set the exit code; a stack
+  // trace on top of it is noise the operator has to read past.
+  if (err?.handled) return;
+  console.error(`backlog-groom: ${err?.stack ?? err}`);
+  process.exitCode = 1;
+});
+
 const USAGE = renderUsage();
 
 
+/**
+ * Report an operational error and stop.
+ *
+ * `process.exitCode` plus a thrown sentinel rather than `process.exit`: an
+ * explicit exit can terminate the process while stdout is still draining, which
+ * truncates a piped payload. Nothing here is large, but the rule is uniform so
+ * the dangerous case below cannot be the exception nobody noticed.
+ */
 function opError(message) {
   console.error(`backlog-groom: ${message}`);
-  process.exit(1);
+  process.exitCode = 1;
+  throw Object.assign(new Error(message), { handled: true });
 }
 
 let values;
@@ -75,7 +92,12 @@ if (values.out) {
   }
 }
 
+// NO `process.exit(0)` HERE. `console.log` to a PIPE is asynchronous, and a
+// 500-issue groomed set comfortably exceeds the pipe buffer; forcing exit
+// terminates the process before stdout drains and the consumer receives a
+// truncated, unparseable payload. Setting the code and letting the event loop
+// finish is what guarantees the whole document arrives.
 if (values.json) console.log(serialiseJson(result.set).trimEnd());
 else console.log(renderReport(result.set));
 
-process.exit(0);
+process.exitCode = 0;

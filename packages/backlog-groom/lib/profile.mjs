@@ -40,6 +40,7 @@ const TOP_LEVEL_KEYS = new Set(['schemaVersion', 'autonomyFloor', 'units', 'froz
 const LABELS_KEYS = new Set(['priority', 'areaPrefix']);
 const PRIORITY_KEYS = new Set(['high', 'medium', 'low']);
 const PROVIDERS_KEYS = new Set(['decider', 'reviewer']);
+const UNIT_KEYS = new Set(['name', 'paths']);
 
 function opError(message) {
   return Object.assign(new Error(message), { isOpError: true });
@@ -123,6 +124,39 @@ export function parseProfile(doc) {
   for (const [key, label] of [['autonomyFloor', 'autonomyFloor'], ['units', 'units'], ['frozenPaths', 'frozenPaths']]) {
     if (Object.hasOwn(doc, key) && !Array.isArray(doc[key])) {
       throw opError(`backlog-groom profile: ${label} must be an array`);
+    }
+  }
+
+  // Each UNIT is validated, not merely the array around it. Raised in
+  // cross-model review: a `pathsx` typo was silently accepted, the unit matched
+  // nothing, its issues quietly fell out of every cluster, and its area relabel
+  // proposals were suppressed — while the run still looked entirely healthy.
+  // That is precisely the silent-ineffectiveness the fail-closed rule exists to
+  // prevent, so the check has to reach the same depth as the damage.
+  if (Object.hasOwn(doc, 'units')) {
+    doc.units.forEach((unit, i) => {
+      if (!isPlainObject(unit)) throw opError(`backlog-groom profile: units[${i}] must be an object`);
+      rejectUnknownKeys(unit, UNIT_KEYS, `units[${i}]`);
+      if (typeof unit.name !== 'string' || unit.name.length === 0) {
+        throw opError(`backlog-groom profile: units[${i}].name must be a non-empty string`);
+      }
+      if (!Array.isArray(unit.paths) || unit.paths.length === 0) {
+        throw opError(`backlog-groom profile: units[${i}] (${unit.name}) must declare a non-empty paths array`);
+      }
+      for (const g of unit.paths) {
+        if (typeof g !== 'string' || g.length === 0) {
+          throw opError(`backlog-groom profile: units[${i}] (${unit.name}) has a non-string path glob`);
+        }
+      }
+    });
+  }
+
+  for (const key of ['frozenPaths', 'autonomyFloor']) {
+    if (!Object.hasOwn(doc, key)) continue;
+    for (const [i, v] of doc[key].entries()) {
+      if (typeof v !== 'string' || v.length === 0) {
+        throw opError(`backlog-groom profile: ${key}[${i}] must be a non-empty string`);
+      }
     }
   }
 

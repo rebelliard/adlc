@@ -28,7 +28,7 @@ test('AC2: the audit body shape routes mechanical, with path, line and snippet c
   const ref = c.references[0];
   assert.equal(ref.path, 'plugins/adlc-pi/lib/gate-tool.mjs');
   assert.equal(ref.line, 134);
-  assert.match(ref.snippet, /const code = typeof/, 'the fenced block is attributed to the nearest preceding path');
+  assert.match(ref.snippets[0], /const code = typeof/, 'the fenced block is attributed to the nearest preceding path');
 });
 
 test('AC2: an inline path:line with no fence still routes mechanical — existence is checkable', () => {
@@ -36,7 +36,7 @@ test('AC2: an inline path:line with no fence still routes mechanical — existen
   assert.equal(c.route, 'mechanical');
   assert.equal(c.references[0].path, 'packages/core/lib/text.mjs');
   assert.equal(c.references[0].line, 37);
-  assert.equal(c.references[0].snippet, null, 'no fence means nothing to compare — verify decides what that implies');
+  assert.deepEqual(c.references[0].snippets, [], 'no fence means nothing to compare — verify decides what that implies');
 });
 
 test('AC2: a checkable claim with no parseable reference routes to model', () => {
@@ -123,7 +123,7 @@ test('AC2: a non-repo-relative path is not a reference, and does not steal a lat
   const refs = parseReferences(body);
   assert.equal(refs.length, 1);
   assert.equal(refs[0].path, 'packages/core/lib/text.mjs');
-  assert.match(refs[0].snippet, /const tag/, 'the snippet belongs to the real citation');
+  assert.match(refs[0].snippets[0], /const tag/, 'the snippet belongs to the real citation');
 });
 
 test('AC2: absolute paths and dot segments are never references', () => {
@@ -156,4 +156,33 @@ test('AC2: a code-shaped token inside a URL is not a code claim', () => {
   // an expensive model verification it never warranted.
   const c = classifyIssue({ number: 1, title: 'artifacts', body: 'they live at s3://bucket/dir/thing.mjs and rotate weekly', labels: [] });
   assert.equal(c.route, 'unverifiable');
+});
+
+test('AC2: every excerpt for one citation is kept, not just the first', () => {
+  const body = [
+    '**Location** `lib/a.mjs:10`',
+    '',
+    '```',
+    'first excerpt',
+    '```',
+    '',
+    'and also',
+    '',
+    '```',
+    'second excerpt',
+    '```',
+  ].join('\n');
+  const refs = parseReferences(body);
+  assert.equal(refs.length, 1);
+  assert.deepEqual(refs[0].snippets, ['first excerpt', 'second excerpt']);
+});
+
+test('AC2: a repeated citation MERGES its excerpts rather than dropping them', () => {
+  const body = [
+    '`lib/a.mjs:10`', '', '```', 'one', '```', '',
+    'again at `lib/a.mjs:10`', '', '```', 'two', '```',
+  ].join('\n');
+  const refs = parseReferences(body);
+  assert.equal(refs.length, 1, 'still one reference');
+  assert.deepEqual(refs[0].snippets, ['one', 'two'], 'dedupe must not discard evidence');
 });
