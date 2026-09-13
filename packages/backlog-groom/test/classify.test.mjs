@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyIssue, parseReferences } from '../lib/classify.mjs';
+import { classifyIssue, parseReferences, MAX_REFERENCES_PER_ISSUE } from '../lib/classify.mjs';
 
 const AUDIT_BODY = [
   '**Source:** `/release-audit` for @adlc 1.11.0, class **false-green**.',
@@ -185,4 +185,20 @@ test('AC2: a repeated citation MERGES its excerpts rather than dropping them', (
   const refs = parseReferences(body);
   assert.equal(refs.length, 1, 'still one reference');
   assert.deepEqual(refs[0].snippets, ['one', 'two'], 'dedupe must not discard evidence');
+});
+
+test('AC2: citations are capped per issue, and the issue is marked truncated', () => {
+  // Every citation costs synchronous git subprocesses, and an issue body is
+  // untrusted input. Unbounded, one issue citing thousands of locations makes a
+  // sweep appear hung.
+  const body = Array.from({ length: 500 }, (_, i) => `see \`lib/f${i}.mjs:${i + 1}\``).join('\n');
+  const c = classifyIssue({ number: 1, title: 't', body, labels: [] });
+  assert.equal(c.references.length, MAX_REFERENCES_PER_ISSUE);
+  assert.equal(c.referencesTruncated, true);
+});
+
+test('AC2: an ordinary issue is not marked truncated', () => {
+  const c = classifyIssue({ number: 2, title: 't', body: 'see `lib/a.mjs:1` and `lib/b.mjs:2`', labels: [] });
+  assert.equal(c.references.length, 2);
+  assert.equal(c.referencesTruncated, false);
 });

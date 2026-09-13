@@ -192,7 +192,7 @@ export function verifyIssue(classified, io = {}) {
     everExisted = (p) => defaultEverExisted(p),
   } = io;
 
-  const { number, route, references = [] } = classified;
+  const { number, route, references = [], referencesTruncated = false } = classified;
 
   // The model route is judged by the skill, not here. It is returned as
   // `unverified` — explicitly NOT `valid` — so nothing downstream can mistake
@@ -291,7 +291,11 @@ export function verifyIssue(classified, io = {}) {
   // citation could not be checked at all. Returning `fixed` there would close on
   // incomplete evidence, which is the same defect as closing on a shifted line,
   // reached by a different route.
-  for (const want of ['moved', 'valid', 'unverifiable', 'fixed']) {
+  // An issue whose citations were CAPPED has not been fully read, so it can
+  // never verify `fixed` — the same rule as a citation that could not be
+  // checked, reached by a different route.
+  const order = referencesTruncated ? ['moved', 'valid', 'unverifiable'] : ['moved', 'valid', 'unverifiable', 'fixed'];
+  for (const want of order) {
     const hit = outcomes.find((o) => o.verdict === want);
     if (!hit) continue;
     if (want === 'unverifiable') {
@@ -300,7 +304,9 @@ export function verifyIssue(classified, io = {}) {
     return { number, route, verdict: want, evidence: hit.evidence ?? null };
   }
 
-  const why = outcomes.find((o) => o.reason)?.reason ?? 'no citation could be checked';
+  const why = referencesTruncated
+    ? 'the issue cites more locations than one sweep will read; its evidence is incomplete'
+    : (outcomes.find((o) => o.reason)?.reason ?? 'no citation could be checked');
   return { number, route, verdict: 'unverifiable', evidence: null, reason: why };
 }
 

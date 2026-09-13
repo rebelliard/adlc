@@ -36,7 +36,14 @@ export function loadProfile(path, io = {}) {
 export function loadCache(path, io = {}) {
   const { exists = existsSync, readFile = (p) => readFileSync(p, 'utf8') } = io;
   try {
-    return exists(path) ? JSON.parse(readFile(path)) : {};
+    if (!exists(path)) return {};
+    const parsed = JSON.parse(readFile(path));
+    // A valid JSON PRIMITIVE is not a cache. `"bad"` and `7` are truthy and
+    // parse cleanly, so a hand-edited or partially-replaced file would sail past
+    // a truthiness check and then throw on the first assignment — crashing a run
+    // that had a perfectly good answer to give.
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    return parsed;
   } catch {
     return {};
   }

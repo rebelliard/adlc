@@ -72,3 +72,12 @@ test('JSON artifacts are 2-space indented and newline-terminated, like the rest 
   assert.match(out, /\n  "a"/, 'two spaces, so a diff of the cache or the emitted set reads like every other JSON here');
   assert.doesNotMatch(out, /\n {3}"a"/);
 });
+
+test('a valid JSON PRIMITIVE is not a cache — it degrades to empty rather than crashing later', () => {
+  // Raised in cross-model review. `"bad"` and `7` parse cleanly and are truthy,
+  // so a truthiness check passes them through and the first assignment throws —
+  // killing a run that had a perfectly good answer to give.
+  for (const raw of ['"bad"', '7', 'true', '"[]"', 'null', '[1,2]']) {
+    assert.deepEqual(loadCache('c.json', { exists: () => true, readFile: () => raw }), {}, `${raw} must not be treated as a cache`);
+  }
+});

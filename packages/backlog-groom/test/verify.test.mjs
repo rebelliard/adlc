@@ -398,3 +398,24 @@ test('AC1: close evidence pins the revision it was computed against', () => {
   assert.equal(v.verdict, 'fixed');
   assert.equal(v.evidence.revision, 'cafe1234', 'evidence without a revision cannot be re-checked later');
 });
+
+test('AC1: an issue whose citations were CAPPED can never verify fixed', () => {
+  // Its evidence was not fully read, which is the same condition as a citation
+  // that could not be checked — reached by a different route, and it must fail
+  // the same way.
+  const v = verifyIssue(
+    { number: 1, route: 'mechanical', referencesTruncated: true, references: [{ path: 'a.mjs', line: 1, snippets: ['gone'] }] },
+    world({ 'a.mjs': 'nothing\n' })
+  );
+  assert.notEqual(v.verdict, 'fixed');
+  assert.equal(v.verdict, 'unverifiable');
+  assert.match(v.reason, /more locations than one sweep will read/);
+});
+
+test('AC1: a capped issue with a surviving citation is still valid', () => {
+  const v = verifyIssue(
+    { number: 2, route: 'mechanical', referencesTruncated: true, references: [{ path: 'a.mjs', line: 1, snippets: ['still here'] }] },
+    world({ 'a.mjs': 'still here\n' })
+  );
+  assert.equal(v.verdict, 'valid', 'the cap only forbids closing, not confirming');
+});

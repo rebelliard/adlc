@@ -19,6 +19,18 @@
 const PATH = String.raw`(?![a-z]+:\/\/)([A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)+\.[A-Za-z0-9]+)`;
 const PATH_WITH_OPTIONAL_LINE = new RegExp(`${PATH}(?::(\\d+))?`, 'g');
 
+/**
+ * Cap on citations honoured from a single issue body.
+ *
+ * Every citation costs synchronous git subprocesses — an existence check, a read
+ * for the hash, a read for verification. An issue body is untrusted input, so an
+ * unbounded count lets one issue citing thousands of distinct `path:line`s make a
+ * sweep appear hung. Beyond the cap the issue is marked truncated, and §3.3's
+ * precedence then forbids it ever verifying `fixed`: evidence that was not fully
+ * read cannot close anything.
+ */
+export const MAX_REFERENCES_PER_ISSUE = 50;
+
 /** A fenced block, with the offset it starts at so it can be attributed. */
 const FENCE = /```[^\n]*\n([\s\S]*?)```/g;
 
@@ -115,6 +127,10 @@ export function parseReferences(body) {
       existing.snippets.push(...(p.snippets ?? []));
       continue;
     }
+    if (out.length >= MAX_REFERENCES_PER_ISSUE) {
+      out.truncated = true;
+      break;
+    }
     const ref = { path: p.path, line: p.line, snippets: [...(p.snippets ?? [])] };
     seen.set(key, ref);
     out.push(ref);
@@ -132,7 +148,14 @@ export function classifyIssue(issue) {
   const body = String(issue?.body ?? '');
   const title = String(issue?.title ?? '');
   const references = parseReferences(body);
-  if (references.length > 0) return { number: issue?.number, route: 'mechanical', references };
+  if (references.length > 0) {
+    return {
+      number: issue?.number,
+      route: 'mechanical',
+      references,
+      referencesTruncated: references.truncated === true,
+    };
+  }
 
   const prose = `${title}\n${maskNonProse(body)}`;
   const claims = CODE_CLAIM.some((re) => re.test(prose));
