@@ -141,3 +141,11 @@ test('AC2: an extension containing a digit is still a path — .mp4, .v2.json, .
     assert.equal(refs[0]?.path, path, `${path} must parse as a reference`);
   }
 });
+
+test('AC2: a URL with a digit in its scheme is still masked — s3://, h2://', () => {
+  // The scheme character class must cover the whole digit range, or `s3://...`
+  // stops being recognised as a URL and its path is mined for a citation the
+  // issue never made about this repository.
+  const refs = parseReferences('artifacts live at s3://bucket/packages/core/lib/text.mjs today');
+  assert.deepEqual(refs, []);
+});

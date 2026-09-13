@@ -47,3 +47,23 @@ export function renderUsage(flags = FLAGS) {
   lines.push('', 'This command never writes to GitHub.');
   return lines.join('\n');
 }
+
+/**
+ * Validate `--threshold`, returning the number or throwing an operational error.
+ *
+ * In lib rather than the binary so its BOUNDARIES can be tested without a
+ * network call: 0 and 1 are both legal (groom everything / groom nothing), and
+ * the binary's own path past this point reaches `gh`.
+ */
+export function validateThreshold(raw) {
+  // Parsed STRICTLY, not coerced. `Number('')` is 0, so an empty `--threshold ''`
+  // would silently mean "surface every pair" — a value the operator never typed.
+  // Same trap `model-router/lib/floor.mjs` documents for `parseFloat('0.5abc')`:
+  // a lenient parser invents a setting out of a typo.
+  const text = String(raw).trim();
+  const n = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(text) ? Number(text) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw Object.assign(new Error(`--threshold must be a number between 0 and 1, got: ${raw}`), { isOpError: true });
+  }
+  return n;
+}

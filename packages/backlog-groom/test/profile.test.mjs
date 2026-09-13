@@ -106,3 +106,10 @@ test('AC21: autonomyFloor is carried through verbatim — validation of its memb
   assert.deepEqual(parseProfile({ schemaVersion: 1, autonomyFloor: [] }).autonomyFloor, []);
   assert.deepEqual(parseProfile({ schemaVersion: 1, autonomyFloor: ['close', 'relabel'] }).autonomyFloor, ['close', 'relabel']);
 });
+
+test('AC21: every priority band is a known key — high, medium and low all parse', () => {
+  // Dropping a band from the known set would make a legitimate mapping an
+  // error, and `low` is the band 166 of this repo's issues actually carry.
+  const p = parseProfile({ schemaVersion: 1, labels: { priority: { high: 'H', medium: 'M', low: 'L' } } });
+  assert.deepEqual(p.labels.priority, { high: 'H', medium: 'M', low: 'L' });
+});

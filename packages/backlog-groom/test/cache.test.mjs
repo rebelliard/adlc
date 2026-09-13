@@ -117,3 +117,11 @@ test('AC10: the cache key is a pure function of (updatedAt, contentHash) and is 
     cacheKeyFor({ updatedAt: 'a', contentHash: 'b|c' })
   );
 });
+
+test('AC10: a null cache entry is a miss, not a crash', () => {
+  // JSON nulls are real: a hand-edited or partially-written cache file yields
+  // `{"6": null}`. A guard that lets null through reaches `entry.verdict` and
+  // throws, taking the whole sweep down over a corrupt cache.
+  const store = { 6: null };
+  assert.equal(cacheGet(store, { number: 6, updatedAt: 'T1', contentHash: 'h1' }), null);
+});

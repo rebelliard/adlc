@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { parseProfile } from '../lib/profile.mjs';
 import { groom } from '../lib/groom.mjs';
 import { renderReport } from '../lib/report.mjs';
-import { renderUsage, parseOptions } from '../lib/usage.mjs';
+import { renderUsage, parseOptions, validateThreshold } from '../lib/usage.mjs';
 
 const USAGE = renderUsage();
 
@@ -39,9 +39,11 @@ if (values.help) {
   process.exit(0);
 }
 
-const threshold = Number(values.threshold);
-if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-  opError(`--threshold must be a number between 0 and 1, got: ${values.threshold}`);
+let threshold;
+try {
+  threshold = validateThreshold(values.threshold);
+} catch (err) {
+  opError(err.message);
 }
 
 const profilePath = values.profile ?? '.claude/backlog-groom-profile.json';

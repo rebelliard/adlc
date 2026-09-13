@@ -9,7 +9,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FLAGS, renderUsage } from '../lib/usage.mjs';
+import { FLAGS, renderUsage, validateThreshold } from '../lib/usage.mjs';
+
+/** Return the error a thunk threw; `assert.throws` returns undefined. */
+function caughtUsage(fn) {
+  try {
+    fn();
+  } catch (err) {
+    return err;
+  }
+  assert.fail('expected a throw');
+}
 
 test('every flag is documented, and value-taking flags show their placeholder', () => {
   const usage = renderUsage();
@@ -37,4 +47,21 @@ test('the usage block separates its header from the flag list with a blank line'
   assert.match(lines[0], /backlog-groom/);
   assert.equal(lines[1], '', 'a blank line must follow the header');
   assert.match(lines[2], /--x/);
+});
+
+test('--threshold accepts both boundaries: 0 grooms every pair, 1 grooms none', () => {
+  // Both ends are legal and meaningful, so the comparison must be inclusive at
+  // each. A gate that rejected 0 or 1 would rule out the two settings an
+  // operator reaches for when calibrating the filter.
+  assert.equal(validateThreshold('0'), 0);
+  assert.equal(validateThreshold('1'), 1);
+  assert.equal(validateThreshold('0.2'), 0.2);
+});
+
+test('--threshold rejects anything outside 0..1, and non-numbers, naming what it got', () => {
+  for (const bad of ['-0.1', '1.1', '5', 'abc', '', 'NaN', 'Infinity']) {
+    const err = caughtUsage(() => validateThreshold(bad));
+    assert.equal(err.isOpError, true, `${JSON.stringify(bad)} must be an operational error`);
+    assert.ok(err.message.includes(String(bad)), 'the message names the value it got');
+  }
 });
