@@ -9,38 +9,16 @@
  * where the work actually is, and clustering on an unchecked claim would hand a
  * lane a grouping built from what an issue asserted rather than what the code
  * shows.
+ *
+ * The glob matcher is IMPORTED, not written here. `packages/core/lib/glob.mjs` is
+ * the canonical one and a repo guard forbids hand-rolled copies — the regex form
+ * people reach for does not terminate in bounded time on a repeated-globstar
+ * pattern, which is exactly the shape a rail glob can take.
  */
 
-/**
- * Minimal glob match: `**` spans separators, `*` does not.
- *
- * Written out rather than pulled from a dependency because the profile's unit
- * globs are operator-authored and must behave predictably; `packages/x/**` has
- * to match `packages/x/lib/a.mjs` and not `packages/xyz/a.mjs`.
- */
-export function globMatch(glob, path) {
-  let re = '';
-  const g = String(glob);
-  for (let i = 0; i < g.length; i += 1) {
-    const c = g[i];
-    if (c === '*' && g[i + 1] === '*') {
-      i += 1;
-      if (g[i + 1] === '/') {
-        i += 1;
-        re += '(?:.*/)?';
-      } else {
-        re += '.*';
-      }
-    } else if (c === '*') {
-      re += '[^/]*';
-    } else if (c === '?') {
-      re += '[^/]';
-    } else {
-      re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    }
-  }
-  return new RegExp(`^${re}$`).test(String(path));
-}
+import { globMatch } from '@adlc/core';
+
+export { globMatch };
 
 /** The profile unit a path belongs to, or null. */
 export function unitFor(path, units) {

@@ -56,6 +56,7 @@ export const GROUPS = [
       { name: 'lesson-foundry', packageName: '@adlc/lesson-foundry', summary: 'Mine repeated findings into deterministic defenses.' },
       { name: 'rejection-mining', packageName: '@adlc/rejection-mining', summary: 'Mine review rejections into reusable review lenses.' },
       { name: 'skill-rot', packageName: '@adlc/skill-rot', summary: 'Check skill files for stale validation metadata and stamp freshness.' },
+      { name: 'backlog-groom', packageName: '@adlc/backlog-groom', summary: 'Verify each open issue against the code, cluster and rank the backlog (read-only).' },
     ],
   },
   {

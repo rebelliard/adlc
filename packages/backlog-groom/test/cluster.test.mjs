@@ -4,6 +4,12 @@
 // predictable: `packages/x/**` must match `packages/x/lib/a.mjs` and must NOT
 // match `packages/xyz/a.mjs`. Clustering is what `issue-lanes` consumes, and a
 // wrong unit sends an issue to the wrong lane.
+//
+// The matcher itself is @adlc/core's canonical one, imported rather than
+// written here: a repo guard forbids hand-rolled copies because the regex form
+// backtracks catastrophically on repeated globstars. These tests pin the
+// semantics this package RELIES on, including the surprising one — `?` is a
+// literal, not a wildcard.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,10 +36,13 @@ test('a literal dot is a dot, not any character', () => {
   assert.equal(globMatch('lib/a.mjs', 'lib/axmjs'), false);
 });
 
-test('? matches one character but never a separator', () => {
-  assert.ok(globMatch('lib/?.mjs', 'lib/a.mjs'));
-  assert.equal(globMatch('lib/?.mjs', 'lib/ab.mjs'), false);
-  assert.equal(globMatch('lib?a.mjs', 'lib/a.mjs'), false, '? must not swallow a slash');
+test('? is a LITERAL, not glob syntax — the canonical matcher says so', () => {
+  // Worth pinning because `?` is glob syntax almost everywhere else, so a
+  // profile author may reasonably expect it to match one character. Here it
+  // matches a literal question mark, and a unit glob written with one will
+  // silently match nothing.
+  assert.equal(globMatch('lib/?.mjs', 'lib/a.mjs'), false);
+  assert.ok(globMatch('lib/?.mjs', 'lib/?.mjs'));
 });
 
 test('unitFor returns the first declared unit that matches, or null', () => {
