@@ -14,7 +14,14 @@ export function coverageOf(rows, { truncated = null } = {}) {
   const routes = { mechanical: 0, model: 0, unverifiable: 0 };
   const verdicts = { valid: 0, fixed: 0, moved: 0, unverified: 0, unverifiable: 0 };
   for (const r of rows ?? []) {
-    const route = r.verified?.route ?? r.classified?.route ?? 'unverifiable';
+    // An issue whose citations were dropped for the budget still carries route
+    // `mechanical` — that was the INTENT, not the outcome. Counting intent would
+    // report budget overflow as "verified mechanically", which is precisely the
+    // thin-run-reads-as-thorough failure the coverage line exists to prevent.
+    const intended = r.verified?.route ?? r.classified?.route ?? 'unverifiable';
+    const route = r.classified?.referencesTruncated && (r.classified?.references ?? []).length === 0
+      ? 'unverifiable'
+      : intended;
     if (route in routes) routes[route] += 1;
     const verdict = r.verified?.verdict ?? 'unverifiable';
     if (verdict in verdicts) verdicts[verdict] += 1;

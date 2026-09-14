@@ -25,6 +25,17 @@ function sandbox(issues = []) {
   writeFileSync(gh, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(issues)}\nJSON\n`);
   chmodSync(gh, 0o755);
   mkdirSync(join(dir, '.adlc'));
+  // A real repository with one commit: verification reads code AT A REVISION, so
+  // a run that cannot resolve one now fails closed rather than reporting a sweep
+  // of `unverifiable` verdicts as a successful, normal-looking result.
+  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.invalid');
+  git('config', 'user.name', 'test');
+  git('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(dir, 'seed.txt'), 'seed\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'seed', '--no-gpg-sign');
   return { dir, bin };
 }
 

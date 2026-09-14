@@ -80,3 +80,17 @@ test('AC20: an empty backlog reports zero without dividing by zero', () => {
   assert.equal(c.mechanicalShare, 0);
   assert.doesNotMatch(renderReport(emitGroomedSet({ coverage: c })), /NaN/);
 });
+
+test('AC20: a budget-dropped issue is NOT counted as mechanically verified', () => {
+  // Its route records the intent, not the outcome. Counting intent would report
+  // budget overflow as "verified mechanically" — a thin run reading as a
+  // thorough one, which is the exact failure this coverage line prevents.
+  const rows = [
+    { number: 1, verified: { route: 'mechanical', verdict: 'valid' }, classified: { route: 'mechanical', references: [{ path: 'a' }] } },
+    { number: 2, verified: { route: 'mechanical', verdict: 'unverifiable' }, classified: { route: 'mechanical', references: [], referencesTruncated: true } },
+  ];
+  const c = coverageOf(rows);
+  assert.equal(c.routes.mechanical, 1, 'only the issue actually verified counts');
+  assert.equal(c.routes.unverifiable, 1);
+  assert.equal(c.mechanicalShare, 0.5);
+});

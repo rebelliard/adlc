@@ -211,3 +211,15 @@ test('AC10: every verdict the verifier can produce is cacheable — including un
     assert.equal(cacheGet(store, key)?.verdict, verdict, `${verdict} must round-trip through the cache`);
   }
 });
+
+test('AC10: an issue with no updatedAt is never cached — nothing would notice a body edit', () => {
+  // contentHash covers the referenced FILES, never the issue body, so updatedAt
+  // is the only component that notices a premise being rewritten. Without it the
+  // key cannot be invalidated by an edit and the old verdict is served forever.
+  const store = {};
+  for (const updatedAt of [null, undefined, '']) {
+    assert.equal(cachePut(store, { number: 30, updatedAt, contentHash: 'h1' }, { verdict: 'valid', route: 'mechanical' }), false);
+  }
+  assert.deepEqual(store, {});
+  assert.equal(cachePut(store, { number: 30, updatedAt: 'T1', contentHash: 'h1' }, { verdict: 'valid', route: 'mechanical' }), true);
+});

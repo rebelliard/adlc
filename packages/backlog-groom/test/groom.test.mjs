@@ -151,3 +151,16 @@ test('an issue that would CROSS the budget is refused entirely, not partly proce
   // Two reads per verified citation (hash + verify), so the ceiling bounds reads.
   assert.ok(reads <= MAX_TOTAL_REFERENCES * 2, `reads must respect the ceiling (got ${reads})`);
 });
+
+test('an unresolvable revision is an operational FAILURE, not a quiet sweep of unverifiables', () => {
+  // Failing to resolve a revision means the tool cannot read the code at all.
+  // Degrading to a full sweep of `unverifiable` verdicts and exiting 0 would
+  // hand the operator a normal-looking report for a run that examined nothing —
+  // the exact false green this package exists to detect, produced by itself.
+  const w = world();
+  w.io.headCommit = () => null;
+  const r = groom({ profile: PROFILE, cache: {}, io: w.io });
+  assert.equal(r.ok, false);
+  assert.equal(r.set, null);
+  assert.match(r.unconsultable, /could not resolve a git revision/);
+});

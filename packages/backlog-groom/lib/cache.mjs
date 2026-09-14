@@ -75,6 +75,11 @@ export function cacheGet(store, key) {
  * rather than silently believing it cached.
  */
 export function cachePut(store, key, value) {
+  // `contentHash` covers the referenced FILES, never the issue body, so
+  // `updatedAt` is the only component that notices a premise being rewritten.
+  // Without it the key cannot be invalidated by an edit, and a verdict computed
+  // from the old premise would be served forever.
+  if (key.updatedAt == null || String(key.updatedAt).length === 0) return false;
   if (key.contentHash == null && value?.verdict === 'valid') return false;
   store[String(key.number)] = { ...value, key: cacheKeyFor(key) };
   return true;

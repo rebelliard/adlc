@@ -53,7 +53,14 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
   const describedCommit = generatedFor ?? (io.headCommit ? io.headCommit() : headCommit());
   // Every git read below uses this resolved sha, not the moving `HEAD` ref, so a
   // checkout switching branches mid-run cannot mix revisions into one set.
-  const revision = describedCommit ?? 'HEAD';
+  if (!describedCommit) {
+    // Failing to resolve a revision is not a backlog with nothing to verify: it
+    // means the tool cannot read the code at all. Degrading to a full sweep of
+    // `unverifiable` verdicts and exiting 0 would hand the operator a
+    // normal-looking report for a run that examined nothing.
+    return { ok: false, unconsultable: 'could not resolve a git revision to verify against', set: null };
+  }
+  const revision = describedCommit;
   // `revision` is spread LAST so an injected io cannot silently unpin the
   // snapshot every read in this run is supposed to share.
   const readIo = { ...io, revision };
