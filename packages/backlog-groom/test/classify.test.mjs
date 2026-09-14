@@ -221,6 +221,13 @@ test('AC2: excerpts are bounded per issue — repeated citations of one path can
   assert.equal(c.referencesTruncated, true, 'and the issue says its evidence is incomplete');
 });
 
+test('AC2: the excerpt bound is 200 — the per-issue matching budget', () => {
+  // Pinned like the other operator-visible bounds. Each excerpt is matched
+  // against the cited file, so this is the ceiling on match work one issue can
+  // demand, and 200 is already far past what a real citation carries.
+  assert.equal(MAX_SNIPPETS_PER_ISSUE, 200);
+});
+
 test('AC2: identical excerpts are deduped — repetition is not extra evidence', () => {
   const body = ['`lib/a.mjs:1`', '', '```', 'same', '```', '', '`lib/a.mjs:1`', '', '```', 'same', '```'].join('\n');
   const refs = parseReferences(body);

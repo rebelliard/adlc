@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { verifyIssue } from '../lib/verify.mjs';
+import { verifyIssue, matchSnippet, prepareContent } from '../lib/verify.mjs';
 
 const SNIPPET = "const code = typeof res?.code === 'number' ? res.code : 1;";
 
@@ -418,4 +418,24 @@ test('AC1: a capped issue with a surviving citation is still valid', () => {
     world({ 'a.mjs': 'still here\n' })
   );
   assert.equal(v.verdict, 'valid', 'the cap only forbids closing, not confirming');
+});
+
+test('AC1: matchSnippet USES the prepared content it is handed', () => {
+  // Without this, `prepareContent` could return nothing and every call would
+  // quietly re-normalise the file instead: identical results, and the whole
+  // point of preparing once per citation silently lost. Asserted by handing it a
+  // prepared view that disagrees with `content` and checking which one wins.
+  const content = 'the real file\n';
+  const prepared = prepareContent('a completely different body\n');
+  const viaPrepared = matchSnippet(content, 'a completely different body', prepared);
+  assert.equal(viaPrepared.kind, 'all', 'the prepared view decided the match');
+
+  const viaContent = matchSnippet(content, 'a completely different body');
+  assert.equal(viaContent.kind, 'none', 'and without it, the content does');
+});
+
+test('AC1: prepareContent returns normalised lines and their original line numbers', () => {
+  const p = prepareContent('first\n\n  second  \n');
+  assert.deepEqual(p.hay, ['first', 'second']);
+  assert.deepEqual(p.originalLineOf, [1, 3], 'blank lines are skipped but the numbering is of the ORIGINAL file');
 });
