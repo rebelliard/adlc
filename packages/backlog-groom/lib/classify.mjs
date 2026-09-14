@@ -31,6 +31,16 @@ const PATH_WITH_OPTIONAL_LINE = new RegExp(`${PATH}(?::(\\d+))?`, 'g');
  */
 export const MAX_REFERENCES_PER_ISSUE = 50;
 
+/**
+ * Cap on fenced excerpts honoured from a single issue body.
+ *
+ * The reference cap counts distinct `path:line` keys, so repeated citations of
+ * ONE path merged excerpts without limit — and verification matches once per
+ * excerpt. A body repeating thousands of fences for one path slipped straight
+ * past the reference cap while `referencesTruncated` stayed false.
+ */
+export const MAX_SNIPPETS_PER_ISSUE = 200;
+
 /** A fenced block, with the offset it starts at so it can be attributed. */
 const FENCE = /```[^\n]*\n([\s\S]*?)```/g;
 
@@ -118,20 +128,36 @@ export function parseReferences(body) {
 
   const seen = new Map();
   const out = [];
+  let snippetBudget = MAX_SNIPPETS_PER_ISSUE;
+
+  /** Take excerpts within budget, dropping exact duplicates. */
+  const takeSnippets = (target, candidates) => {
+    for (const sn of candidates) {
+      if (snippetBudget <= 0) {
+        out.truncated = true;
+        return;
+      }
+      // Identical excerpts are redundant work, not extra evidence.
+      if (target.includes(sn)) continue;
+      target.push(sn);
+      snippetBudget -= 1;
+    }
+  };
   for (const p of paths) {
     const key = `${p.path}:${p.line ?? ''}`;
     const existing = seen.get(key);
     if (existing) {
       // A repeated citation MERGES its excerpts rather than being dropped:
-      // dedupe must not discard evidence.
-      existing.snippets.push(...(p.snippets ?? []));
+      // dedupe must not discard evidence — within the excerpt budget.
+      takeSnippets(existing.snippets, p.snippets ?? []);
       continue;
     }
     if (out.length >= MAX_REFERENCES_PER_ISSUE) {
       out.truncated = true;
       break;
     }
-    const ref = { path: p.path, line: p.line, snippets: [...(p.snippets ?? [])] };
+    const ref = { path: p.path, line: p.line, snippets: [] };
+    takeSnippets(ref.snippets, p.snippets ?? []);
     seen.set(key, ref);
     out.push(ref);
   }

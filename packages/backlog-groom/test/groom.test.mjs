@@ -125,3 +125,29 @@ test('a sweep enforces a GLOBAL citation budget, and says the run was incomplete
   assert.equal(beyond.verdict, 'unverifiable', 'an issue past the budget is not verified, and says so');
   assert.notEqual(beyond.verdict, 'fixed', 'and can never close');
 });
+
+test('an issue that would CROSS the budget is refused entirely, not partly processed', () => {
+  // Checking only whether the budget was already spent lets a straddling issue
+  // process every citation and drive the counter negative, while the run still
+  // reports itself complete.
+  const many = '**Location** `packages/core/lib/text.mjs:1`\n\n```\nconst tag = one;\n```\n';
+  const issues = Array.from({ length: MAX_TOTAL_REFERENCES + 5 }, (_, i) => ({
+    number: i + 1, title: 't', body: many, labels: [], url: 'u', updatedAt: 'T1',
+  }));
+  let reads = 0;
+  const { set } = groom({
+    profile: PROFILE,
+    cache: null,
+    io: {
+      fetchIssues: () => ({ issues, unconsultable: null, truncated: null }),
+      readFile: () => { reads += 1; return 'const tag = one;\n'; },
+      pathExists: () => true,
+      lastCommitFor: () => 'abc',
+      everExisted: () => true,
+      headCommit: () => 'rev',
+    },
+  });
+  assert.equal(set.coverage.budgetExhausted, true);
+  // Two reads per verified citation (hash + verify), so the ceiling bounds reads.
+  assert.ok(reads <= MAX_TOTAL_REFERENCES * 2, `reads must respect the ceiling (got ${reads})`);
+});

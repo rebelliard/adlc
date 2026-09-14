@@ -35,6 +35,20 @@ function normaliseLines(text) {
     .filter((l) => l.length > 0);
 }
 
+/** Normalised lines plus their original 1-based line numbers, computed once. */
+export function prepareContent(content) {
+  const originalLineOf = lineIndexOf(content);
+  return { hay: normaliseLines(content), originalLineOf };
+}
+
+function lineIndexOf(content) {
+  const out = [];
+  String(content).split('\n').forEach((l, i) => {
+    if (l.trim().length > 0) out.push(i + 1);
+  });
+  return out;
+}
+
 /**
  * Match a cited snippet against a file.
  *
@@ -53,15 +67,15 @@ function normaliseLines(text) {
  *
  * @returns {{kind:'all'|'none'|'partial', firstLine:number, matched:number, total:number}}
  */
-export function matchSnippet(content, snippet) {
+export function matchSnippet(content, snippet, prepared = null) {
   const needle = normaliseLines(snippet);
-  const hay = normaliseLines(content);
+  // `prepared` lets a caller normalise a file ONCE and match many excerpts
+  // against it. Re-normalising per excerpt made a body repeating fences for one
+  // path rebuild the whole file representation each time.
+  const hay = prepared?.hay ?? normaliseLines(content);
   if (needle.length === 0) return { kind: 'none', firstLine: -1, matched: 0, total: 0 };
 
-  const originalLineOf = [];
-  String(content).split('\n').forEach((l, i) => {
-    if (l.trim().length > 0) originalLineOf.push(i + 1);
-  });
+  const originalLineOf = prepared?.originalLineOf ?? lineIndexOf(content);
 
   // Greedy in-order subsequence walk.
   let hi = 0;
@@ -140,9 +154,9 @@ export function headCommit(run = execFileSync) {
 }
 
 /** The commit that last touched `path`, or null when git cannot say. */
-function defaultLastCommitFor(path, run = execFileSync) {
+function defaultLastCommitFor(path, rev = 'HEAD', run = execFileSync) {
   try {
-    return String(run('git', ['log', '-1', '--format=%h', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).trim() || null;
+    return String(run('git', ['log', '-1', '--format=%h', rev, '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).trim() || null;
   } catch {
     return null;
   }
@@ -158,13 +172,17 @@ function defaultLastCommitFor(path, run = execFileSync) {
  * `moved` verdicts out of 379 issues on the first live run. A path this
  * repository has never contained is prose, not a reference.
  */
-function defaultEverExisted(path, run = execFileSync) {
+function defaultEverExisted(path, rev = 'HEAD', run = execFileSync) {
   try {
     // stderr is discarded: git complains loudly about paths outside the
     // repository, and that is an expected answer here ("no"), not a fault worth
     // printing over the report.
+    // Scoped to the run's revision rather than `--all`: a path added on another
+    // branch after the described commit has not "existed" as far as this run is
+    // concerned, and treating it as deleted would report `moved` for a file that
+    // never was.
     const out = String(
-      run('git', ['log', '--all', '--oneline', '-1', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      run('git', ['log', '--oneline', '-1', rev, '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
     ).trim();
     return out.length > 0;
   } catch {
@@ -188,8 +206,8 @@ export function verifyIssue(classified, io = {}) {
     revision = 'HEAD',
     readFile = (p) => defaultReadFileAtHead(p, revision),
     pathExists = (p) => defaultPathExistsAtHead(p, revision),
-    lastCommitFor = (p) => defaultLastCommitFor(p),
-    everExisted = (p) => defaultEverExisted(p),
+    lastCommitFor = (p) => defaultLastCommitFor(p, revision),
+    everExisted = (p) => defaultEverExisted(p, revision),
   } = io;
 
   const { number, route, references = [], referencesTruncated = false } = classified;
@@ -240,7 +258,8 @@ export function verifyIssue(classified, io = {}) {
     // there, whatever happened to the others. Judging only one excerpt is how an
     // issue that quotes a location twice — once removed, once live — verifies
     // `fixed` and gets closed.
-    const matches = snippets.map((sn) => matchSnippet(content, sn));
+    const prepared = prepareContent(content);
+    const matches = snippets.map((sn) => matchSnippet(content, sn, prepared));
     const best = matches.find((x) => x.kind === 'all')
       ?? matches.find((x) => x.kind === 'partial')
       ?? matches[0];

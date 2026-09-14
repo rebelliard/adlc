@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classifyIssue, parseReferences, MAX_REFERENCES_PER_ISSUE } from '../lib/classify.mjs';
+import { classifyIssue, parseReferences, MAX_REFERENCES_PER_ISSUE, MAX_SNIPPETS_PER_ISSUE } from '../lib/classify.mjs';
 
 const AUDIT_BODY = [
   '**Source:** `/release-audit` for @adlc 1.11.0, class **false-green**.',
@@ -208,4 +208,21 @@ test('AC2: an ordinary issue is not marked truncated', () => {
   const c = classifyIssue({ number: 2, title: 't', body: 'see `lib/a.mjs:1` and `lib/b.mjs:2`', labels: [] });
   assert.equal(c.references.length, 2);
   assert.equal(c.referencesTruncated, false);
+});
+
+test('AC2: excerpts are bounded per issue — repeated citations of one path cannot slip the cap', () => {
+  // The reference cap counts distinct path:line keys, so a body repeating
+  // thousands of fences for ONE path merged them all into a single reference and
+  // stayed under the cap, while verification matched once per excerpt.
+  const fences = Array.from({ length: 400 }, (_, i) => `\`lib/a.mjs:1\`\n\n\`\`\`\nexcerpt ${i}\n\`\`\``).join('\n\n');
+  const c = classifyIssue({ number: 1, title: 't', body: fences, labels: [] });
+  const total = c.references.reduce((n, r) => n + r.snippets.length, 0);
+  assert.equal(total, MAX_SNIPPETS_PER_ISSUE);
+  assert.equal(c.referencesTruncated, true, 'and the issue says its evidence is incomplete');
+});
+
+test('AC2: identical excerpts are deduped — repetition is not extra evidence', () => {
+  const body = ['`lib/a.mjs:1`', '', '```', 'same', '```', '', '`lib/a.mjs:1`', '', '```', 'same', '```'].join('\n');
+  const refs = parseReferences(body);
+  assert.deepEqual(refs[0].snippets, ['same']);
 });

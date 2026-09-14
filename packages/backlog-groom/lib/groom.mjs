@@ -54,7 +54,9 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
   // Every git read below uses this resolved sha, not the moving `HEAD` ref, so a
   // checkout switching branches mid-run cannot mix revisions into one set.
   const revision = describedCommit ?? 'HEAD';
-  const readIo = { revision, ...io };
+  // `revision` is spread LAST so an injected io cannot silently unpin the
+  // snapshot every read in this run is supposed to share.
+  const readIo = { ...io, revision };
   const { issues, unconsultable, truncated } = io.fetchIssues ? io.fetchIssues() : fetchIssues(io);
   if (unconsultable) {
     // An unconsultable fetch is not an empty backlog. Returning a normal-looking
@@ -67,12 +69,17 @@ export function groom({ profile, cache = null, judge = null, io = {}, relationTh
 
   const rows = issues.map((issue) => {
     const classified = classifyIssue(issue);
-    if (referenceBudget <= 0 && classified.references.length > 0) {
+    // Compared against the issue's OWN count, not merely "is the budget already
+    // spent". Checking afterwards lets an issue straddling the ceiling process
+    // all of its citations and drive the counter negative while the run still
+    // reports itself complete — an overrun the operator-visible budget denies.
+    const wanted = classified.references.length;
+    if (wanted > 0 && wanted > referenceBudget) {
       budgetExhausted = true;
       classified.references = [];
       classified.referencesTruncated = true;
     } else {
-      referenceBudget -= classified.references.length;
+      referenceBudget -= wanted;
     }
     const paths = classified.references.map((r) => r.path);
     const hash = contentHash(paths, readIo);
