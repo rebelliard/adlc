@@ -1,0 +1,49 @@
+---
+title: backlog-groom
+description: Verifies each open issue's premise against the code at HEAD, clusters and ranks the backlog, and emits a versioned groomed set. Read-only.
+---
+
+# backlog-groom
+
+**ADLC phase: maintenance / cross-phase** · **Gate:** none. Read-only; it writes nothing to GitHub.
+
+## What it defends against
+
+A backlog's labels are stamped once at filing and then rot. Nothing re-checks whether an issue is still true, so a mature backlog fills with issues whose premise the code has already outgrown — and lane selection re-derives the same code-grounded analysis every time it picks work. `backlog-groom` verifies each issue's premise against the code at HEAD, clusters issues by the package their verified locations sit in, ranks them from what it learned, and emits a versioned set.
+
+> **Not yet routed through `adlc`.** Registering the verb means editing
+> `packages/cli/lib/registry.mjs`, which is a frozen rail of an in-flight ticket,
+> so the tool is invoked by its own binary for now and the `adlc backlog-groom`
+> verb lands once that rail expires.
+
+This package is the **read path**. The adversarial gate, the autonomy floor and execution live in the write path; proposals are emitted for it rather than applied here.
+
+## Routes and verdicts
+
+An issue is routed by the evidence its body carries: `mechanical` (a parseable code reference), `model` (a checkable claim with nothing parseable to check), or `unverifiable` (no claim about code at all). `unverifiable` is a first-class outcome — collapsing it into "still valid" is the specific false green this tool exists to detect.
+
+Verdicts are `valid`, `fixed`, `moved`, `unverifiable`, and `unverified` for the model route. Three rules keep `fixed` honest, because it is the verdict that leads to a close:
+
+- The cited **line is a hint, never an identity.** Any unrelated edit above a citation shifts every line below it, so a line-anchored comparison reports `fixed` for live code.
+- An **elided excerpt is still a citation.** Bodies routinely quote non-contiguous lines, so matching is an in-order subsequence — and *partial* survival is `unverifiable`, because changed is not fixed.
+- A path **git has never tracked is not a deleted file**, it is prose shaped like a path.
+
+Across several citations the precedence is `moved` > `valid` > `unverifiable` > `fixed`, so every tie-break fails towards not closing. `unverifiable` outranking `fixed` is the subtle one: an issue with one citation gone and another that could not be checked has not been shown fixed, and closing it would act on incomplete evidence.
+
+## Profile
+
+`.claude/backlog-groom-profile.json` carries the repo-specific facts — units, frozen paths, label conventions, the autonomy floor the write path reads, and `providers.decider`. It fails closed: an unrecognised key at any depth is an operational error, for the same reason `model-router`'s floor refuses a value outside its range rather than clamping it. A missing profile is fine; the defaults are complete and conservative.
+
+## Incrementality and honesty
+
+The cache is keyed on `(updatedAt, contentHash)` and is gitignored. An issue with no referenced paths has no `contentHash` and is never cached as `valid` — such a key could never be invalidated by a code change.
+
+Every run leads with its route distribution, and a truncated fetch says so loudly. Relation candidates come from a similarity filter that is never evidence; each run reports how many pairs it excluded, since those were never judged and they bound what the run could have found.
+
+## What `fixed` does and does not mean
+
+`fixed` means every line an issue cited is gone from the file it cited. It does not mean the defect was fixed: a refactor can preserve the same wrong behaviour while rewriting every quoted line, and code can survive verbatim while the logic around it stops reaching it.
+
+That is why `fixed` produces a close **proposal** rather than a close, why the evidence carries the revision it was computed against, and why the write path puts every proposal through a fresh-context reviewer and the autonomy floor first. The verdict is a strong triage signal, not a proof, and nothing in the design treats it as one. The evidence field is named `lastCommitTouchingPath` rather than "the removing commit" for the same reason — that is what it actually is.
+
+The cache is a local, gitignored performance artifact and **not a trust boundary**: anyone who can write it can also edit the code that produces verdicts, so it grants no privilege, and a cached verdict is never evidence. `--no-cache` forces full re-verification when a run must stand on its own.
