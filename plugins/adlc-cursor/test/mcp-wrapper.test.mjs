@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -54,6 +54,19 @@ function tmp(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 const cleanup = (p) => rmSync(p, { recursive: true, force: true });
+
+// Every wrapper launch gets its own state dir; remove them all once the file
+// finishes so repeated runs do not accumulate empty dirs under tmpdir().
+const stateDirs = new Set();
+after(() => {
+  for (const dir of stateDirs) cleanup(dir);
+});
+
+function stateDir() {
+  const dir = tmp("adlc-mcp-state-");
+  stateDirs.add(dir);
+  return dir;
+}
 
 function adlcRepo(pointer = { id: "T1" }) {
   const root = tmp("adlc-mcp-");
@@ -103,7 +116,7 @@ function spawnWrapper(env, { wrapper = WRAPPER, cwd = join(HERE, "..") } = {}) {
     cwd,
     env: {
       ...process.env,
-      ADLC_CURSOR_STATE_DIR: tmp("adlc-mcp-state-"),
+      ADLC_CURSOR_STATE_DIR: stateDir(),
       ...env,
     },
     stdio: ["pipe", "pipe", "pipe"],

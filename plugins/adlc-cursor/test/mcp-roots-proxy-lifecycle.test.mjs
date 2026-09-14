@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { runRootsProxy } from "../lib/mcp-roots-proxy.mjs";
@@ -29,6 +29,19 @@ function tmp(prefix) {
 
 function cleanup(path) {
   rmSync(path, { recursive: true, force: true });
+}
+
+// Every subprocess launch gets its own state dir; remove them all once the
+// file finishes so repeated runs do not accumulate empty dirs under tmpdir().
+const stateDirs = new Set();
+after(() => {
+  for (const dir of stateDirs) cleanup(dir);
+});
+
+function stateDir() {
+  const dir = tmp("adlc-mcp-state-");
+  stateDirs.add(dir);
+  return dir;
 }
 
 function adlcRepo() {
@@ -102,7 +115,7 @@ function launch(env) {
     cwd: join(HERE, ".."),
     env: {
       ...process.env,
-      ADLC_CURSOR_STATE_DIR: tmp("adlc-mcp-state-"),
+      ADLC_CURSOR_STATE_DIR: stateDir(),
       ...env,
     },
     stdio: ["pipe", "pipe", "pipe"],

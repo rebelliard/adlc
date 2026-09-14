@@ -82,9 +82,33 @@ export function directWriterBypasses(files) {
   }).map((path) => relative(ROOT, path).replaceAll('\\', '/')).sort();
 }
 
+/**
+ * The generated Cursor MCP bundle inlines @adlc/tickets and @adlc/core, so an
+ * unrelated edit to either package makes it stale, and a stale bundle is then
+ * reported here as a direct writer. Say so, rather than leaving the author to
+ * work out why a generated file they never touched is "bypassing" the boundary.
+ */
+export function directWriterBypassMessage(bypasses) {
+  const base = `direct ticket-store writers outside the approved adapters: ${bypasses.join(', ')}`;
+  if (!bypasses.includes(CURSOR_MCP_BUNDLE)) return base;
+  return `${base}\n${CURSOR_MCP_BUNDLE} is listed because it no longer matches the official builder output `
+    + '(a bundled @adlc/tickets or @adlc/core source changed, or the bundle was hand-edited): '
+    + 'run `npm run build:cursor-mcp` and commit the regenerated bundle and metadata.';
+}
+
 test('production ticket-store filesystem writers are confined to approved adapters', () => {
   const files = ['packages', 'plugins', 'scripts'].flatMap((path) => filesBelow(join(ROOT, path)));
-  assert.deepEqual(directWriterBypasses(files), []);
+  const bypasses = directWriterBypasses(files);
+  assert.deepEqual(bypasses, [], directWriterBypassMessage(bypasses));
+});
+
+test('a stale Cursor MCP bundle failure names the rebuild command', () => {
+  assert.match(directWriterBypassMessage([CURSOR_MCP_BUNDLE]), /npm run build:cursor-mcp/);
+  assert.doesNotMatch(
+    directWriterBypassMessage(['packages/rogue/lib/store.mjs']),
+    /build:cursor-mcp/,
+    'an ordinary direct writer must not be misdiagnosed as a stale bundle',
+  );
 });
 
 test('suite directories are skipped, production directories are not', () => {
