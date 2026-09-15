@@ -49,8 +49,9 @@ const PLANT = {
 describe('buildJudgePrompt fences externally-authored text (#750)', () => {
   // The fence emitted by @adlc/core is <<UNTRUSTED:LABEL:LABEL-N>> … <<END:LABEL:LABEL-N>>.
   // Assert on the LABEL, not the whole tag, since the tag carries a length.
-  const fenceOpen = (label) => new RegExp(`<<UNTRUSTED:${label}:${label}-\\d+>>`);
-  const fenceClose = (label) => new RegExp(`<<END:${label}:${label}-\\d+>>`);
+  // The tag is a per-call nonce (#1005), not a length.
+  const fenceOpen = (label) => new RegExp(`<<UNTRUSTED:${label}:[0-9a-f-]{36}>>`);
+  const fenceClose = (label) => new RegExp(`<<END:${label}:[0-9a-f-]{36}>>`);
 
   it('puts a hostile finding description inside a FINDING_SAYS fence, not on a bare line', () => {
     const prompt = buildJudgePrompt(PLANT, {

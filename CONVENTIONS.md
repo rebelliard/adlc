@@ -32,9 +32,18 @@ package.json template:
 
 1. **Zero runtime dependencies.** Node 18+ built-ins and `@adlc/core` only.
    Import core via relative path: `import { … } from '../../core/index.mjs'`.
-2. **Core is frozen.** Never edit anything under `packages/core/`. If core
+2. **Core is frozen to ADDITIONS.** Never *add* to `packages/core/`. If core
    lacks something, implement locally in your `lib/` and note the gap in
    your README under "Core gaps".
+
+   **A defect in an existing core primitive is fixed in core**, not worked
+   around locally. Core exists so that one implementation is correct for every
+   caller; patching around it leaves the other callers broken and buries the
+   finding in one package's source. Worked example — #1005: `fence()`'s
+   delimiter was forgeable by the content it was fencing. It was found once,
+   patched locally in `@adlc/autopilot`, and seventeen other call sites kept
+   the defect until it was fixed in core. A core defect fix must ship a
+   regression test in `packages/core/test/` and name the issue it closes.
 3. **Scope discipline.** Write ONLY inside your own `packages/<name>/`.
    Never touch other packages, ADLC.md, root files, or `.adlc/`.
 4. **Exit codes:** 0 = gate passes · 1 = operational error (bad input,
