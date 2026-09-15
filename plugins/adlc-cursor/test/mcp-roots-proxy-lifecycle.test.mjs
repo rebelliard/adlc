@@ -526,8 +526,17 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
     const forwardedRequest = received.find(
       (message) => message.method === "tools/list",
     );
+    child.stdin.end();
     child.exitCode = 0;
     child.emit("exit", 0, null);
+    proxy.send({ jsonrpc: "2.0", id: 11, method: "tools/list", params: {} });
+    await proxy.waitFor(() =>
+      proxy.messages().some((message) => message.id === 11),
+    );
+    assert.match(
+      proxy.messages().find((message) => message.id === 11).error.message,
+      /not bound to a consumer root/,
+    );
     child.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
@@ -550,6 +559,86 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
           result: { tools: [{ name: "adlc_gate" }] },
         },
       ],
+    );
+  } finally {
+    proxy.input.end();
+    await proxy.running;
+    cleanup(root);
+  }
+});
+
+test("child stdin errors fail in-flight calls without leaving the child bound", async () => {
+  const root = adlcRepo();
+  let child;
+  const received = [];
+  const proxy = launchInProcess({
+    spawnImpl: () => {
+      child = fakeChild();
+      child.stdin.setEncoding("utf8");
+      child.stdin.on("data", (chunk) => {
+        for (const line of chunk.trim().split("\n")) {
+          if (!line) {
+            continue;
+          }
+          const message = JSON.parse(line);
+          received.push(message);
+          if (message.method === "initialize") {
+            child.stdout.write(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: message.id,
+                result: { capabilities: {} },
+              }) + "\n",
+            );
+          }
+        }
+      });
+      return child;
+    },
+  });
+  try {
+    proxy.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { capabilities: { roots: {} } },
+    });
+    proxy.send({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {},
+    });
+    await proxy.waitFor(() => latestRootsRequest({ messages: proxy.messages }));
+    proxy.send({
+      jsonrpc: "2.0",
+      id: latestRootsRequest({ messages: proxy.messages }).id,
+      result: { roots: [{ uri: root }] },
+    });
+    await proxy.waitFor(() =>
+      received.some((message) => message.method === "initialize"),
+    );
+
+    proxy.send({ jsonrpc: "2.0", id: 10, method: "tools/list", params: {} });
+    await proxy.waitFor(() =>
+      received.some((message) => message.method === "tools/list"),
+    );
+    child.stdin.emit("error", new Error("fixture stdin closed"));
+
+    await proxy.waitFor(() =>
+      proxy.messages().some((message) => message.id === 10),
+    );
+    assert.match(
+      proxy.messages().find((message) => message.id === 10).error.message,
+      /child stdin failed: fixture stdin closed/,
+    );
+
+    proxy.send({ jsonrpc: "2.0", id: 11, method: "tools/list", params: {} });
+    await proxy.waitFor(() =>
+      proxy.messages().some((message) => message.id === 11),
+    );
+    assert.match(
+      proxy.messages().find((message) => message.id === 11).error.message,
+      /not bound to a consumer root/,
     );
   } finally {
     proxy.input.end();

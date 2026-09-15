@@ -2561,6 +2561,7 @@ async function runRootsProxy({
 } = {}) {
   let child = null;
   let childRl = null;
+  let childAcceptingRequests = false;
   let boundRoot = null;
   let generation = 1;
   let rootsRequestSequence = 0;
@@ -2608,6 +2609,7 @@ async function runRootsProxy({
     const retiringRl = childRl;
     child = null;
     childRl = null;
+    childAcceptingRequests = false;
     return retireSpecificChild(retiringChild, retiringRl);
   };
   const bindChild = (root) => {
@@ -2635,6 +2637,7 @@ async function runRootsProxy({
       return { ok: false, message };
     }
     boundRoot = root;
+    childAcceptingRequests = false;
     binding = true;
     const childHandshakeId = `__adlc_child_init_${myGen}`;
     const childProcess = child;
@@ -2657,6 +2660,13 @@ async function runRootsProxy({
       idBridge.clear(childProcess);
       child = null;
       childRl = null;
+      childAcceptingRequests = false;
+      boundRoot = null;
+      binding = false;
+    };
+    const stopAcceptingRequests = () => {
+      if (child !== childProcess) return;
+      childAcceptingRequests = false;
       boundRoot = null;
       binding = false;
     };
@@ -2683,6 +2693,17 @@ async function runRootsProxy({
     });
     childProcess.stdout.on("end", closeReadlineAfterOutput);
     childProcess.stdout.on("close", closeReadlineAfterOutput);
+    childProcess.stdin.on("error", (err) => {
+      if (myGen !== generation || state.retired) return;
+      state.error = err;
+      state.retired = true;
+      clearChildHandshakeWait(childProcess);
+      clearBoundChild();
+      const message = `ADLC MCP child stdin failed: ${err.message}`;
+      requests.failPending(message);
+      requests.failInFlight(message);
+      void retireSpecificChild(childProcess, readline);
+    });
     readline.on("line", (line) => {
       if (myGen !== generation || state.retired) return;
       if (!line.trim()) return;
@@ -2715,6 +2736,7 @@ async function runRootsProxy({
               method: "notifications/initialized",
               params: {}
             });
+            childAcceptingRequests = true;
             binding = false;
             flushPending();
           }
@@ -2749,12 +2771,14 @@ async function runRootsProxy({
       clearChildHandshakeWait(childProcess);
       if (myGen !== generation) return;
       state.exited = true;
+      stopAcceptingRequests();
       failAfterOutputDrains();
     });
     childProcess.on("close", () => {
       clearChildHandshakeWait(childProcess);
       if (myGen !== generation) return;
       state.processClosed = true;
+      stopAcceptingRequests();
       closeReadlineAfterOutput();
       failAfterOutputDrains();
     });
@@ -2762,6 +2786,7 @@ async function runRootsProxy({
       clearChildHandshakeWait(childProcess);
       if (myGen !== generation) return;
       state.error = err;
+      stopAcceptingRequests();
       if (childProcess.stdout.readableEnded || childProcess.stdout.destroyed)
         closeReadlineAfterOutput();
       failAfterOutputDrains();
@@ -2799,7 +2824,7 @@ async function runRootsProxy({
     return { ok: true };
   };
   const flushPending = () => {
-    if (!child?.stdin) return;
+    if (!child?.stdin || !childAcceptingRequests) return;
     requests.flush(
       (msg) => send(child.stdin, idBridge.forwardClientRequest(msg, child, generation))
     );
@@ -2949,7 +2974,7 @@ async function runRootsProxy({
       }
       if (isResponse) {
         const mapping = idBridge.takeChildResponse(msg.id, child, generation);
-        if (mapping && child?.stdin && boundRoot && !binding) {
+        if (mapping && child?.stdin && childAcceptingRequests && boundRoot && !binding) {
           send(child.stdin, { ...msg, id: mapping.originalId });
         }
         return;
@@ -3021,7 +3046,7 @@ async function runRootsProxy({
         });
         return;
       }
-      if (child?.stdin && boundRoot && !binding) {
+      if (child?.stdin && childAcceptingRequests && boundRoot && !binding) {
         requests.track(msg);
         send(
           child.stdin,

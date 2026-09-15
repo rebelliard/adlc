@@ -1,8 +1,9 @@
 // mcp-wrapper.test.mjs — T65 AC7: host-env + Roots proxy (unit/subprocess).
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
+  cpSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
@@ -30,9 +31,11 @@ import {
 import { resolveConsumerWorkspace } from "../lib/workspace-resolve.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(HERE, "..", "..", "..");
 const WRAPPER = join(HERE, "..", "bin", "adlc-mcp-wrapper.mjs");
 const BUNDLED_WRAPPER = join(HERE, "..", "bin", "adlc-mcp-wrapper.bundle.mjs");
 const MCP_JSON = join(HERE, "..", "mcp.json");
+const REAL_CLI = join(REPO_ROOT, "packages", "cli", "bin", "adlc.mjs");
 
 // Cursor documents substitution in command/args/env/cwd. This helper validates
 // the post-substitution launch contract; it does not prove an installed Cursor
@@ -83,6 +86,19 @@ function adlcRepo(pointer = { id: "T1" }) {
       JSON.stringify(pointer),
     );
   return root;
+}
+
+function commitFixture(root) {
+  const git = (args) => execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  git(["init", "-q", "-b", "main"]);
+  git(["config", "user.email", "test@example.com"]);
+  git(["config", "user.name", "ADLC test"]);
+  git(["add", "--all"]);
+  git(["commit", "-qm", "fixture"]);
 }
 
 function writeFakeCli(root) {
@@ -530,6 +546,125 @@ test("Roots proxy: Cursor bare-path root binds and lists both tools", async () =
       reply.result.tools.map((tool) => tool.name),
       ["adlc_gate", "adlc_prosecute"],
     );
+  } finally {
+    child.kill();
+    cleanup(root);
+  }
+});
+
+test("bundled Roots proxy forwards real adlc_gate and adlc_prosecute calls in the resolved consumer root", async () => {
+  const root = adlcRepo();
+  const evidenceDir = join(root, ".omo", "evidence");
+  mkdirSync(evidenceDir, { recursive: true });
+  cpSync(
+    join(REPO_ROOT, ".omo", "evidence"),
+    evidenceDir,
+    { recursive: true },
+  );
+  copyFileSync(
+    join(REPO_ROOT, "docs", "examples", "p5-passes.json"),
+    join(root, "passes.json"),
+  );
+  commitFixture(root);
+
+  const child = spawnWrapper(
+    { ADLC_CLI_BIN: REAL_CLI },
+    { wrapper: BUNDLED_WRAPPER },
+  );
+  const out = attachCollector(child);
+  const replies = () => out.text()
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  try {
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: { roots: { listChanged: false } },
+          clientInfo: { name: "real-cli-roundtrip-test" },
+        },
+      }) + "\n",
+    );
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+        params: {},
+      }) + "\n",
+    );
+    await out.waitFor((stdout) => stdout.includes("roots/list"));
+    const rootsRequest = replies().find((message) => message.method === "roots/list");
+    assert.ok(rootsRequest, `missing Roots request:\n${out.text()}`);
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: rootsRequest.id,
+        result: { roots: [{ uri: root }] },
+      }) + "\n",
+    );
+
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      }) + "\n",
+    );
+    await out.waitFor((stdout) =>
+      stdout.includes('"id":2') && stdout.includes("adlc_prosecute"),
+    );
+    assert.deepEqual(
+      replies()
+        .find((message) => message.id === 2)
+        .result.tools.map((tool) => tool.name),
+      ["adlc_gate", "adlc_prosecute"],
+    );
+
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "adlc_gate",
+          arguments: { gate: "gate-manifest", args: ["show", "--json"] },
+        },
+      }) + "\n",
+    );
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "adlc_prosecute",
+          arguments: {
+            input: "passes.json",
+            ticket: "T1",
+            revision: "docs-example-revision",
+          },
+        },
+      }) + "\n",
+    );
+    await out.waitFor((stdout) =>
+      stdout.includes('"id":3') && stdout.includes('"id":4'),
+    );
+
+    for (const id of [3, 4]) {
+      const reply = replies().find((message) => message.id === id);
+      assert.equal(reply.result.isError, false, JSON.stringify(reply));
+      assert.equal(
+        JSON.parse(reply.result.content[0].text).ok,
+        true,
+        JSON.stringify(reply),
+      );
+    }
   } finally {
     child.kill();
     cleanup(root);
