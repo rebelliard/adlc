@@ -245,6 +245,13 @@ export async function runRootsProxy({
     childProcess.stdin.on("error", (err) => {
       if (myGen !== generation || state.retired) return;
       state.error = err;
+      // A child may emit exit before its stdin error reaches us. In that case
+      // stdout can still carry an already-produced response, so keep its ID
+      // bridge until the stream drains and fail only requests left unresolved.
+      if (state.exited || state.processClosed) {
+        failAfterOutputDrains();
+        return;
+      }
       state.retired = true;
       clearChildHandshakeWait(childProcess);
       clearBoundChild();

@@ -2696,6 +2696,10 @@ async function runRootsProxy({
     childProcess.stdin.on("error", (err) => {
       if (myGen !== generation || state.retired) return;
       state.error = err;
+      if (state.exited || state.processClosed) {
+        failAfterOutputDrains();
+        return;
+      }
       state.retired = true;
       clearChildHandshakeWait(childProcess);
       clearBoundChild();

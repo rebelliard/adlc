@@ -537,6 +537,7 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
       proxy.messages().find((message) => message.id === 11).error.message,
       /not bound to a consumer root/,
     );
+    child.stdin.emit("error", new Error("late fixture stdin error"));
     child.stdout.write(
       JSON.stringify({
         jsonrpc: "2.0",
