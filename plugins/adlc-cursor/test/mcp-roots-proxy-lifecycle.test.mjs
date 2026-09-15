@@ -1725,8 +1725,11 @@ test("rebind drops retired child responses and stale Roots replies without distu
 
 test("a live silent child times out queued calls without overlap or orphaning", async () => {
   const root = adlcRepo();
-  const pidFile = join(root, "silent-child.pid");
   let childExit;
+  // Take the pid from the spawned process, not from a file the child writes:
+  // the proxy retires it 50ms + 20ms after spawn, and under CI load node
+  // startup can outlast that, so a pid file may never appear.
+  let childPid;
   let spawnCount = 0;
   const proxy = launchInProcess({
     childHandshakeTimeoutMs: 50,
@@ -1736,12 +1739,12 @@ test("a live silent child times out queued calls without overlap or orphaning", 
       ADLC_CLI_BIN: writeFakeCli(root, {
         initialize: "silent",
         ignoreSigterm: true,
-        pidFile,
       }),
     },
     spawnImpl: (...args) => {
       spawnCount += 1;
       const child = spawn(...args);
+      childPid = child.pid;
       childExit = once(child, "exit");
       return child;
     },
@@ -1765,12 +1768,10 @@ test("a live silent child times out queued calls without overlap or orphaning", 
       id: latestRootsRequest({ messages: proxy.messages }).id,
       result: { roots: [{ uri: root }] },
     });
-    await proxy.waitFor(() => existsSync(pidFile));
-    const childPid = Number(readFileSync(pidFile, "utf8"));
-
     await proxy.waitFor(() =>
       proxy.messages().some((message) => message.id === 10),
     );
+    assert.equal(Number.isInteger(childPid), true, "the child must have spawned");
     const timedOut = proxy.messages().find((message) => message.id === 10);
     assert.equal(timedOut.error.code, -32001);
     assert.match(timedOut.error.message, /initialization timed out after 50ms/);
