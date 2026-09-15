@@ -87,11 +87,12 @@ function writeFakeCli(
   } = {},
 ) {
   const fakeCli = join(root, "fake-adlc-lifecycle.mjs");
+  const pidTmp = pidFile ? `${pidFile}.writing` : null;
   writeFileSync(
     fakeCli,
-    `import { writeFileSync } from "node:fs";
+    `import { renameSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-${pidFile ? `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));` : ""}
+${pidFile ? `writeFileSync(${JSON.stringify(pidTmp)}, String(process.pid));\nrenameSync(${JSON.stringify(pidTmp)}, ${JSON.stringify(pidFile)});` : ""}
 ${ignoreSigterm ? `process.on("SIGTERM", () => { ${sigtermFile ? `writeFileSync(${JSON.stringify(sigtermFile)}, "received");` : ""} });` : ""}
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -171,6 +172,19 @@ function collect(child) {
       );
     },
   };
+}
+
+// The fake CLI publishes its pid by atomic rename, so the file is either absent
+// or complete. Parse defensively anyway: Number("") is 0, and process.kill(0, 0)
+// probes this process GROUP instead of reporting ESRCH — which would turn a
+// child that outlived the wrapper into a passing assertion.
+function readChildPid(pidFile) {
+  const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+  assert.ok(
+    Number.isInteger(pid) && pid > 0,
+    `child pid file must hold a real pid, got ${JSON.stringify(pid)}`,
+  );
+  return pid;
 }
 
 function send(child, message) {
@@ -1817,7 +1831,7 @@ test("child initialize error uses bounded retirement before wrapper shutdown", a
         stderr.includes("injected child initialize failure") &&
         existsSync(pidFile),
     );
-    const childPid = Number(readFileSync(pidFile, "utf8"));
+    const childPid = readChildPid(pidFile);
     assert.equal(out.reply(10).error.code, -32603);
     assert.match(out.reply(10).error.message, /initialization failed/);
 
@@ -1858,7 +1872,7 @@ test("SIGTERM retires a SIGTERM-ignoring child through the SIGKILL fallback", as
       result: { roots: [{ uri: root }] },
     });
     await out.waitFor(() => existsSync(pidFile));
-    const serverPid = Number(readFileSync(pidFile, "utf8"));
+    const serverPid = readChildPid(pidFile);
 
     child.kill("SIGTERM");
     await Promise.race([
@@ -1899,7 +1913,7 @@ test("SIGTERM during serialized rebind waits for a SIGTERM-ignoring child to die
       result: { roots: [{ uri: root }] },
     });
     await out.waitFor(() => existsSync(pidFile));
-    const serverPid = Number(readFileSync(pidFile, "utf8"));
+    const serverPid = readChildPid(pidFile);
 
     send(child, {
       jsonrpc: "2.0",
