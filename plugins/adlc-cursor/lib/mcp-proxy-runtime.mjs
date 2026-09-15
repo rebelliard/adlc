@@ -74,12 +74,18 @@ export class ClientRequests {
  * timeoutMs. The fallback timer is deliberately not unref'd: shutdown must keep
  * this process alive long enough to reap a child that ignores SIGTERM, so Cursor
  * closing stdio cannot orphan `adlc mcp-server`.
+ *
+ * After SIGKILL the retirement waits for the real exit, but only for
+ * killTimeoutMs: a child stuck in uninterruptible I/O reports no exit until the
+ * kernel releases it, and rebind/shutdown must not hang on it. Continuing is
+ * safe because a SIGKILLed process never runs user code again.
  */
 export function retireChildProcess(
   child,
   childReadline,
   timers,
   timeoutMs = 500,
+  killTimeoutMs = 2_000,
 ) {
   if (childReadline) {
     try {
@@ -94,17 +100,27 @@ export function retireChildProcess(
 
   return new Promise((resolve) => {
     let settled = false;
-    let timer = null;
+    const ownTimers = new Set();
     const finish = () => {
       if (settled) return;
       settled = true;
       child.removeListener("exit", finish);
       child.removeListener("error", finish);
-      if (timer) {
+      for (const timer of ownTimers) {
         clearTimeout(timer);
         timers.delete(timer);
       }
+      ownTimers.clear();
       resolve();
+    };
+    const schedule = (callback, delayMs) => {
+      const timer = setTimeout(() => {
+        ownTimers.delete(timer);
+        timers.delete(timer);
+        callback();
+      }, delayMs);
+      ownTimers.add(timer);
+      timers.add(timer);
     };
     child.once("exit", finish);
     child.once("error", finish);
@@ -114,7 +130,7 @@ export function retireChildProcess(
       finish();
       return;
     }
-    timer = setTimeout(() => {
+    schedule(() => {
       try {
         const signaled = child.kill("SIGKILL");
         // SIGKILL delivery is asynchronous. A replacement child must wait for
@@ -122,11 +138,18 @@ export function retireChildProcess(
         // once during a rebind.
         if (!signaled) {
           finish();
+          return;
         }
       } catch {
         finish();
+        return;
       }
+      schedule(() => {
+        process.stderr.write(
+          `adlc-mcp-wrapper: child ${child.pid ?? "?"} did not exit ${killTimeoutMs}ms after SIGKILL; continuing\n`,
+        );
+        finish();
+      }, killTimeoutMs);
     }, timeoutMs);
-    timers.add(timer);
   });
 }

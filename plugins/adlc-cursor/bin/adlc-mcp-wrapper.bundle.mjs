@@ -2366,7 +2366,7 @@ var ClientRequests = class {
     return `${typeof id}:${JSON.stringify(id)}`;
   }
 };
-function retireChildProcess(child, childReadline, timers, timeoutMs = 500) {
+function retireChildProcess(child, childReadline, timers, timeoutMs = 500, killTimeoutMs = 2e3) {
   if (childReadline) {
     try {
       childReadline.close();
@@ -2378,17 +2378,27 @@ function retireChildProcess(child, childReadline, timers, timeoutMs = 500) {
   }
   return new Promise((resolve6) => {
     let settled = false;
-    let timer = null;
+    const ownTimers = /* @__PURE__ */ new Set();
     const finish = () => {
       if (settled) return;
       settled = true;
       child.removeListener("exit", finish);
       child.removeListener("error", finish);
-      if (timer) {
+      for (const timer of ownTimers) {
         clearTimeout(timer);
         timers.delete(timer);
       }
+      ownTimers.clear();
       resolve6();
+    };
+    const schedule = (callback, delayMs) => {
+      const timer = setTimeout(() => {
+        ownTimers.delete(timer);
+        timers.delete(timer);
+        callback();
+      }, delayMs);
+      ownTimers.add(timer);
+      timers.add(timer);
     };
     child.once("exit", finish);
     child.once("error", finish);
@@ -2398,17 +2408,25 @@ function retireChildProcess(child, childReadline, timers, timeoutMs = 500) {
       finish();
       return;
     }
-    timer = setTimeout(() => {
+    schedule(() => {
       try {
         const signaled = child.kill("SIGKILL");
         if (!signaled) {
           finish();
+          return;
         }
       } catch {
         finish();
+        return;
       }
+      schedule(() => {
+        process.stderr.write(
+          `adlc-mcp-wrapper: child ${child.pid ?? "?"} did not exit ${killTimeoutMs}ms after SIGKILL; continuing
+`
+        );
+        finish();
+      }, killTimeoutMs);
     }, timeoutMs);
-    timers.add(timer);
   });
 }
 

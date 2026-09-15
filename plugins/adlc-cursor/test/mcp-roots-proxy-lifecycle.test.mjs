@@ -279,6 +279,34 @@ test("SIGKILL retirement waits for the child exit event before resolving", async
   assert.equal(timers.size, 0);
 });
 
+test("SIGKILL retirement is bounded when the child never reports exit", async () => {
+  // A child stuck in uninterruptible I/O accepts SIGKILL but emits no exit
+  // until the kernel lets it go. Rebind and shutdown must not wait forever:
+  // a killed process never runs user code again, so continuing is safe.
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.pid = 4242;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  const timers = new Set();
+  const retired = retireChildProcess(child, null, timers, 1, 10);
+
+  await Promise.race([
+    retired,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("retirement never resolved")), 500),
+    ),
+  ]);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(timers.size, 0, "both retirement timers must be released");
+  assert.equal(child.listenerCount("exit"), 0);
+  assert.equal(child.listenerCount("error"), 0);
+});
+
 function responsiveFakeChild(received) {
   const child = fakeChild();
   child.stdin.setEncoding("utf8");
