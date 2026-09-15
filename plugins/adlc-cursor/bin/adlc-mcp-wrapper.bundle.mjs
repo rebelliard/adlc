@@ -2400,10 +2400,13 @@ function retireChildProcess(child, childReadline, timers, timeoutMs = 500) {
     }
     timer = setTimeout(() => {
       try {
-        child.kill("SIGKILL");
+        const signaled = child.kill("SIGKILL");
+        if (!signaled) {
+          finish();
+        }
       } catch {
+        finish();
       }
-      finish();
     }, timeoutMs);
     timers.add(timer);
   });

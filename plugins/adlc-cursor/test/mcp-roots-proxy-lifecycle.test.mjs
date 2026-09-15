@@ -19,6 +19,7 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { runRootsProxy } from "../lib/mcp-roots-proxy.mjs";
+import { retireChildProcess } from "../lib/mcp-proxy-runtime.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, "..", "bin", "adlc-mcp-wrapper.mjs");
@@ -232,6 +233,35 @@ function fakeChild({ ignoreSigterm = false } = {}) {
   };
   return child;
 }
+
+test("SIGKILL retirement waits for the child exit event before resolving", async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  const timers = new Set();
+  let settled = false;
+  const retired = retireChildProcess(child, null, timers, 1).then(() => {
+    settled = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(
+    settled,
+    false,
+    "SIGKILL delivery does not prove the child has exited",
+  );
+
+  child.exitCode = 0;
+  child.emit("exit", 0, "SIGKILL");
+  await retired;
+  assert.equal(timers.size, 0);
+});
 
 function responsiveFakeChild(received) {
   const child = fakeChild();

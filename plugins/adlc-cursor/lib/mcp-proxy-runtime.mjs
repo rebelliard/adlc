@@ -116,11 +116,16 @@ export function retireChildProcess(
     }
     timer = setTimeout(() => {
       try {
-        child.kill("SIGKILL");
+        const signaled = child.kill("SIGKILL");
+        // SIGKILL delivery is asynchronous. A replacement child must wait for
+        // the actual exit/error event, otherwise both MCP children can run at
+        // once during a rebind.
+        if (!signaled) {
+          finish();
+        }
       } catch {
-        /* already gone */
+        finish();
       }
-      finish();
     }, timeoutMs);
     timers.add(timer);
   });
