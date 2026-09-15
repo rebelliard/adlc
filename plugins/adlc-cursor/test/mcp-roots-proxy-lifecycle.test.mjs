@@ -32,6 +32,22 @@ function cleanup(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
+async function waitForProcessExit(pid, timeoutMs = 500) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") {
+        return;
+      }
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`process ${pid} remained alive after ${timeoutMs}ms`);
+}
+
 // Every subprocess launch gets its own state dir; remove them all once the
 // file finishes so repeated runs do not accumulate empty dirs under tmpdir().
 const stateDirs = new Set();
@@ -553,6 +569,10 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
     await proxy.waitFor(() =>
       received.some((message) => message.method === "tools/list"),
     );
+    proxy.send({ jsonrpc: "2.0", id: 12, method: "tools/list", params: {} });
+    await proxy.waitFor(() =>
+      received.filter((message) => message.method === "tools/list").length === 2,
+    );
     const forwardedRequest = received.find(
       (message) => message.method === "tools/list",
     );
@@ -579,7 +599,8 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
     child.emit("close", 0, null);
 
     await proxy.waitFor(() =>
-      proxy.messages().some((message) => message.id === 10),
+      proxy.messages().some((message) => message.id === 10) &&
+      proxy.messages().some((message) => message.id === 12),
     );
     assert.deepEqual(
       proxy.messages().filter((message) => message.id === 10),
@@ -590,6 +611,10 @@ test("child exit waits for buffered stdout before failing in-flight calls", asyn
           result: { tools: [{ name: "adlc_gate" }] },
         },
       ],
+    );
+    assert.match(
+      proxy.messages().find((message) => message.id === 12).error.message,
+      /child failed.*late fixture stdin error/,
     );
   } finally {
     proxy.input.end();
@@ -1727,7 +1752,7 @@ test("a live silent child times out queued calls without overlap or orphaning", 
       1,
       "a timed-out child must not overlap a successor",
     );
-    assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" });
+    await waitForProcessExit(childPid);
   } finally {
     proxy.input.end();
     await proxy.running;
