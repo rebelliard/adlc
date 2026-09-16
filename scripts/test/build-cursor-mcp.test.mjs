@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { version as esbuildVersion } from 'esbuild';
 
 import { buildCursorMcp } from '../build-cursor-mcp.mjs';
@@ -135,4 +136,18 @@ test('buildCursorMcp refuses a builder response without an output file', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// Every other test passes an explicit root, so the module's own default — the
+// repository root the release path and `npm run build:cursor-mcp` rely on —
+// would otherwise go unexercised.
+test('the default root is the repository root', () => {
+  const repoRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
+  const explicit = buildCursorMcp({ root: repoRoot, write: false });
+  const byDefault = buildCursorMcp({ write: false });
+
+  assert.equal(byDefault.outputPath, explicit.outputPath);
+  assert.equal(byDefault.metadataPath, explicit.metadataPath);
+  assert.deepEqual(byDefault.bundle, explicit.bundle);
+  assert.deepEqual(byDefault.metadata, explicit.metadata);
 });
