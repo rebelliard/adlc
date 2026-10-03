@@ -117,11 +117,12 @@ export async function listRegisteredAgents(client, { timeoutMs = AGENT_LIST_TIME
  *
  * A call whose `agent` is registered prompts AS that agent, so opencode resolves
  * the lens's own configured `model` (agent frontmatter or `opencode.json`
- * `agent.<name>.model`) exactly as its Task tool does, and uses the agent's own
- * prompt — the `system` override is omitted there, or opencode would append the
- * charter a second time. The registered set is read once per ask. An
- * unregistered agent is never named: opencode reports that only as a generic
- * 500, so the call carries the `system` override on the session model instead.
+ * `agent.<name>.model`) exactly as its Task tool does. The authoritative
+ * packaged charter is always passed as `system` so repo-controlled agent files
+ * or version drift cannot tamper with or weaken the reviewer instructions. The
+ * registered set is read once per ask. An unregistered agent is never named:
+ * opencode reports that only as a generic 500, so the call carries the `system`
+ * override on the session model instead.
  * `onResolved` is told which model answered each call, whether the agent's
  * config was used, and whether the agent listing succeeded at all
  * (`agentsListed: false` → every lens fell back because the host could not list
@@ -150,7 +151,7 @@ export function makeLensAsk(client, {
           body: {
             ...(model ? { model } : {}),
             ...(asAgent ? { agent } : {}),
-            ...(!asAgent && system ? { system } : {}),
+            ...(system ? { system } : {}),
             tools: lensToolsMap(),
             parts: [{ type: 'text', text: prompt }],
           },

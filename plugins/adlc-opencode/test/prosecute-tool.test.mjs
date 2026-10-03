@@ -128,7 +128,7 @@ test('execute: every lens and the verifier prompt AS their agent and report the 
   const r = await def.adlc_prosecute.execute({ base: 'main' }, { sessionID: 's' });
   const named = new Set(client.calls.prompts.map((p) => p.body.agent));
   for (const a of ALL_AGENTS) assert.ok(named.has(a), `${a} prompted as its own agent`);
-  for (const p of client.calls.prompts) assert.equal('system' in p.body, false, 'no duplicated charter');
+  for (const p of client.calls.prompts) assert.ok(p.body.system?.length > 0, 'authoritative charter is always present');
   for (const a of ALL_AGENTS) assert.deepEqual(r.metadata.models[a], [`vercel/vmc/adlc-${a}`]);
   assert.deepEqual(r.metadata.unregisteredAgents, []);
   assert.equal(r.metadata.agentListUnavailable, false);
@@ -203,6 +203,14 @@ test('makeAgentPromptReader reads the packaged agent prompt; "" for an unknown a
   const read = makeAgentPromptReader(PKG);
   assert.ok(read('prosecutor-correctness').length > 0, 'real lens prompt loads');
   assert.equal(read('nope-not-an-agent'), '');
+});
+
+test('execute: a failing lens model fails CLOSED (NO-SHIP), not an uncaught throw', async () => {
+  const client = mockClient(() => { throw new Error('503 model unavailable'); });
+  const def = buildProsecuteTool(fakeSchema, { root: '/p', pkgRoot: PKG, client, diffImpl: () => 'diff x' });
+  const r = await def.adlc_prosecute.execute({ base: 'main' }, { sessionID: 's' });
+  assert.equal(r.metadata.verdict, 'NO-SHIP (prosecution-failed)');
+  assert.match(r.output, /Prosecution stopped with an error.*503/);
 });
 
 // ---- rails: the plugin's own adlc_prosecute tool must not be denied ----

@@ -137,7 +137,28 @@ export function buildProsecuteTool(schema, { root = process.cwd(), pkgRoot, clie
             metadata: { base, deterministic: true, confirmed: 0, empty: true },
           };
         }
-        const result = await runProsecution({ ask, agentPrompt: makeAgentPromptReader(pkgRoot), diff });
+        let result;
+        try {
+          result = await runProsecution({ ask, agentPrompt: makeAgentPromptReader(pkgRoot), diff });
+        } catch (err) {
+          const reviewers = ledger.summary();
+          return {
+            title: 'adlc_prosecute: NO-SHIP (prosecution failed)',
+            output: [
+              `Prosecution stopped with an error: ${err?.message ?? err}. Not treating this as a clean pass — fail closed.`,
+              ...modelLines(reviewers),
+            ].join('\n'),
+            metadata: {
+              base, deterministic: true, verdict: 'NO-SHIP (prosecution-failed)',
+              error: 'prosecution-failed',
+              confirmed: 0,
+              models: reviewers.models,
+              unregisteredAgents: reviewers.unregisteredAgents,
+              agentListUnavailable: reviewers.agentListUnavailable,
+              singleModel: reviewers.singleModel,
+            },
+          };
+        }
         const lines = result.confirmed.map((f) =>
           `- [${f.severity ?? '?'}] ${f.title}${f.file ? ` (${f.file})` : ''}${result.unverified.includes(f) ? ' — UNVERIFIED (kept fail-closed)' : ''}`);
         // A bounded/incomplete run is NOT a clean pass: only a converged run with

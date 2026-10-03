@@ -92,16 +92,16 @@ for (const p of prompts) {
 log(`all ${prompts.length} lens/verifier child sessions were fail-closed (wildcard-deny-first allowlist; task/unknown tools denied) (AC2)`);
 
 // Per-lens models: every child prompts AS its lens/verifier agent, so opencode
-// resolves that agent's configured model, and carries no duplicate `system`
-// charter on top of the agent's own prompt.
+// resolves that agent's configured model, while preserving the authoritative
+// packaged charter as a system prompt.
 const named = new Set(prompts.map((p) => p?.body?.agent));
 for (const agent of ALL_AGENTS) {
   if (!named.has(agent)) fail(`no child session prompted as ${agent} (it would inherit the session model)`);
 }
 for (const p of prompts) {
-  if (p?.body?.system) fail(`child session for ${p?.body?.agent} duplicates the agent prompt as a system override`);
+  if (!p?.body?.system) fail(`child session for ${p?.body?.agent} missing authoritative packaged charter`);
 }
-log(`every lens and the verifier prompted as its own agent (${ALL_AGENTS.length} agents) — per-lens models apply`);
+log(`every lens and the verifier prompted as its own agent with packaged charter (${ALL_AGENTS.length} agents) — per-lens models apply`);
 
 // The loop ran in FIRST-PARTY code (the tool's execute drove it) — not the host
 // model orchestrating — which is the whole point of the deterministic runner.

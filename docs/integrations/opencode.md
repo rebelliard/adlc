@@ -220,14 +220,17 @@ own agent** (`agent: "prosecutor-<lens>"`) and carries a **fail-closed read-only
 `tools` allowlist**. Naming the agent makes opencode resolve that lens's
 configured `model` — agent frontmatter or `opencode.json`
 `agent.<name>.model` — the same way its Task tool does, so each lens can run on a
-different model (a clean multi-model P5). A lens agent that is not registered is
-never named: its call runs on the session model with the agent's prompt as a
-`system` override. The registered set comes from `client.app.agents()` once per
-run (bounded at 5 s), because opencode reports an unknown agent only as a generic
-500; a host that cannot list agents keeps every lens on the session model, and the
-report says the listing failed rather than blaming missing agents. A lens whose
-own model fails is never retried on the session model, so it cannot silently
-switch model family. The tool reports which model answered each lens and which
+different model (advisory model diversity; trust-root cross-model review still
+requires distinct providers and a signed attestation). The authoritative
+packaged charter is always passed as `system` on every child prompt so repo-local
+files or version drift cannot weaken the reviewer instructions. A lens agent
+that is not registered is never named: its call runs on the session model with
+the agent's prompt as a `system` override. The registered set comes from
+`client.app.agents()` once per run (bounded at 5 s), because opencode reports an
+unknown agent only as a generic 500; a host that cannot list agents keeps every
+lens on the session model, and the report says the listing failed rather than
+blaming missing agents. A lens whose own model fails is never retried on the
+session model, so it cannot silently switch model family. The tool reports which model answered each lens and which
 ran on the session model, and labels a run as single-model (not
 cross-model) only when every reviewer reported the same, known model. The `tools`
 map is `{ "*": false, <read-only tools>: true }` — the wildcard-deny-first

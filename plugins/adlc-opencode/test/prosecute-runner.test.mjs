@@ -92,14 +92,14 @@ function lensClient(promptImpl, { agents = ALL_AGENTS, listing } = {}) {
 }
 const reply = (text, info) => ({ data: { ...(info ? { info } : {}), parts: [{ type: 'text', text }] } });
 
-test('per-lens model: a registered agent is sent as `agent` WITHOUT the system override, still write-disabled', async () => {
+test('per-lens model: a registered agent is sent as `agent` WITH the authoritative system charter, still write-disabled', async () => {
   const client = lensClient(() => reply('ok'));
   const ask = makeLensAsk(client, { parentID: 'parent' });
   const text = await ask({ agent: 'prosecutor-security', system: 'LENS SYSTEM PROMPT', prompt: 'find bugs' });
   assert.equal(text, 'ok');
   const body = client.calls.prompts[0].body;
   assert.equal(body.agent, 'prosecutor-security');
-  assert.equal('system' in body, false, 'the agent carries its own prompt; the override would duplicate it');
+  assert.equal(body.system, 'LENS SYSTEM PROMPT', 'the authoritative packaged charter is preserved');
   assert.equal('model' in body, false, 'no explicit model: opencode resolves the agent model');
   assert.equal(Object.keys(body.tools)[0], '*');
   assert.equal(body.tools['*'], false);
