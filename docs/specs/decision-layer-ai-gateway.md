@@ -15,9 +15,9 @@ on Vercel AI Gateway through the gateway's OpenAI-compatible Decisions API, with
 the key in `AI_GATEWAY_API_KEY`. A developer who has a gateway key but no
 TypeSafe key can then run `adlc decision evaluate --mode shadow`.
 
-Nothing changes for a project that does not select the new provider. The one
-change that `jev` and `mock` see is that a reply's model ID may now carry one
-`/` (see "Interface").
+Nothing changes for a project that does not select the new provider, except
+one thing that `jev` and `mock` also see: a model ID, in `--model` and in a
+reply, may now carry one `/` (see "Interface").
 
 ## Goals
 
@@ -75,10 +75,14 @@ adlc decision evaluate --mode shadow --provider <ai-gateway|jev|mock> --model <i
   `/^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)?$/`:
   zero or one `/`, never leading or trailing, the same 128-character total cap
   and the same characters as today. Every ID valid today stays valid.
+- `MODEL_PATTERN` checks `--model` for every provider, so `--provider jev` or
+  `--provider mock` also accepts an ID with one `/` (for example
+  `typesafe-ai/jev`). For `jev` that ID goes to TypeSafe as it is, and TypeSafe
+  answers or rejects it.
 - `MODEL_PATTERN` also checks the reply's model in `lib/provider.mjs`
   (`validModel`), for every provider. So a `jev` or `mock` reply that names a
-  model with one `/` stops being `malformed-response`. This is the only change
-  `jev` and `mock` see, and a test covers it.
+  model with one `/` stops being `malformed-response`.
+- These two are the only changes `jev` and `mock` see, and tests cover both.
 - `isPinnedModel` does not change.
 - The run record keeps its fields: `provider` is `ai-gateway`, `requestedModel`
   is the `--model` value, `resolvedModel` is the model the reply names.
@@ -426,3 +430,12 @@ The synthesis takes:
 
 Premortem rounds reached the cap of three. Decisions 21-25 were folded in
 after round 3 without a fourth round.
+
+## Decisions (contributor review, 2026-10-11)
+
+26. The wider `MODEL_PATTERN` also applies to `--model` for `jev` and `mock`,
+    not only to reply models. A fresh review found that the spec claimed less
+    than the code and the frozen CLI test do. One pattern for every provider
+    follows decision 10, keeps the frozen test valid, and lets `jev` reach a
+    TypeSafe-compatible endpoint that uses vendor-scoped IDs. Re-approved by
+    Rafael Belliard, 2026-10-11.
