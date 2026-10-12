@@ -25,6 +25,10 @@ function readTicketArray(path) {
     if (err.code === 'ENOENT') return [];
     throw new Error(`ticket table ${path} exists but cannot be read for tiering: ${err.message}`);
   }
+  return parseTicketTable(raw, path);
+}
+
+function parseTicketTable(raw, path) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -304,6 +308,42 @@ function readBaseTickets(root, revision) {
   }
 }
 
+// The in-repo --dir ticket table (the third loadTicketsForTier source) as the
+// BASE tip has it. Same containment rule as loadTicketsForTier: an out-of-repo
+// --dir, or the canonical `.adlc`, contributes nothing here. A file absent at
+// the base contributes nothing; a present but malformed one throws.
+function readBaseDirTickets(root, base, dir) {
+  if (!base) return [];
+  const resolvedDir = resolve(dir);
+  if (!isInsideRepo(root, resolvedDir) || resolvedDir === resolve(root, '.adlc')) return [];
+  const rel = relative(root, join(resolvedDir, 'tickets.json')).split(/[\\/]/).join('/');
+  const commit = git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: root }).trim();
+  if (git(['ls-tree', '--name-only', commit, '--', rel], { cwd: root }).trim() === '') return [];
+  return parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`);
+}
+
+// The ticket under prosecution, as the BASE tip declares it (#1180). Its
+// `baseRails` are the string rails of every base-tip entry with that id, from
+// the canonical store and the in-repo --dir table (empty when the base has no
+// such ticket), so classifyTrustRootTier can tell a rail the change itself adds
+// from one the base already freezes. Read from the base, never HEAD: a HEAD edit
+// that drops a base rail cannot un-freeze it. An unreadable base store still
+// throws (fail closed).
+function ownTicketAtBase(root, base, ticketId, dir) {
+  const baseRails = new Set();
+  for (const ticket of [...readBaseTickets(root, base), ...readBaseDirTickets(root, base, dir)]) {
+    if (ticket?.id !== ticketId || !Array.isArray(ticket.rails)) continue;
+    for (const rail of ticket.rails) if (typeof rail === 'string') baseRails.add(rail);
+  }
+  return { id: ticketId, baseRails: [...baseRails] };
+}
+
+function printSkippedOwnRails(tier, ticketId, base) {
+  for (const rail of tier.skippedOwnRails) {
+    console.error(`tier: skipped own new rail of ticket ${ticketId}: ${rail} (not on base ${base})`);
+  }
+}
+
 // The SOURCE side of every rename/copy between the base and the change.
 //
 // `changedFiles` collects `git diff --name-only`, and with rename detection on
@@ -502,6 +542,12 @@ ADLC P5 review-evidence recorder.
   tier reasons are printed to stderr on a tiered run. If <base> is unresolvable the
   run FAILS CLOSED (exit 1): CI must fetch/provide the base.
 
+  A rail of the --ticket ticket that the base tip does not declare for it is that
+  ticket's OWN NEW rail: it applies after merge, so it does not tier this change
+  (#1180). Each skipped rail is printed to stderr as
+  'tier: skipped own new rail of ticket <id>: <glob> (not on base <base>)'.
+  Rails already on the base, other tickets' rails, and every other surface still tier.
+
   record-cross-model --ticket id --provider <p> --author-provider <a> --verdict approve
                      [--revision rev] [--input <passes.json>] [--base main] [--dir .adlc]
                      [--allow-unsigned] [--allow-unknown-ticket]
@@ -527,6 +573,13 @@ ADLC P5 review-evidence recorder.
       base actually moved, and the resulting chain depth stays within the cap — otherwise
       a FRESH distinct-provider review is required. --provider/--author-provider/--verdict
       are not accepted here: the carried entry keeps the ORIGINAL review's identity.
+
+  tier-check [--ticket id] [--base main] [--dir .adlc] [--author-provider <a>] [--json]
+      Classify the change and, when it is trust-root tier, require a signature-
+      verified distinct-provider cross-model approve for its revision. With
+      --ticket, that ticket's own new rails are skipped as described above and
+      listed on stderr; without --ticket, every active ticket's rails tier.
+      --json always includes "skippedOwnRails" (empty without --ticket).
 
   tier-check ... [--attestation-store PATH]
       OPTIONAL: pass a direct file path to a protected-ref attestation store to
@@ -785,14 +838,19 @@ if (positionals[0] === 'tier-check') {
   }
   let tier;
   try {
-    tier = classifyTrustRootTier({ changedFiles: changed, tickets });
+    // #1180: only with --ticket may that ticket's own new rails be skipped.
+    // Without it (the CI form), every active ticket's rails tier as before.
+    const ownTicket = values.ticket ? ownTicketAtBase(root, values.base, values.ticket, values.dir) : undefined;
+    tier = classifyTrustRootTier({ changedFiles: changed, tickets, ownTicket });
   } catch (err) {
     opError(`tier-check: cannot classify the change: ${err.message}`);
   }
+  printSkippedOwnRails(tier, values.ticket, values.base);
+  const skippedOwnRails = tier.skippedOwnRails;
 
   // AC3: the tier decision is ALWAYS visible — tiered or not.
   if (!tier.isTrustRootTier) {
-    if (values.json) printJson({ trustRootTier: false, reasons: [], crossModelRequired: false, satisfied: true });
+    if (values.json) printJson({ trustRootTier: false, reasons: [], crossModelRequired: false, satisfied: true, skippedOwnRails });
     else console.log('tier-check: NOT trust-root tier — no cross-model review required.');
     process.exit(0);
   }
@@ -813,7 +871,7 @@ if (positionals[0] === 'tier-check') {
   const key = getKey();
   if (!key) {
     if (values.json) {
-      printJson({ trustRootTier: true, reasons: tier.reasons, crossModelRequired: true, satisfied: false, revision, keyAvailable: false });
+      printJson({ trustRootTier: true, reasons: tier.reasons, crossModelRequired: true, satisfied: false, revision, keyAvailable: false, skippedOwnRails });
     } else {
       console.error(`tier-check: ADLC_MANIFEST_KEY is not available, so cross-model attestations cannot be signature-verified — an unverifiable attestation is forgeable, so NONE is trusted. This required trust-root gate FAILS CLOSED for revision ${revision}. Provide the key as a CI secret (available to same-repo runs) and re-record the attestation with it.`);
     }
@@ -867,7 +925,7 @@ if (positionals[0] === 'tier-check') {
     truncationDetected = !assertNoTruncation({ prEntries, observedEntries: authorScopedObserved, revision, key }).ok;
   }
   if (values.json) {
-    printJson({ trustRootTier: true, reasons: tier.reasons, crossModelRequired: true, satisfied, revision, chainTrustworthy, truncationDetected });
+    printJson({ trustRootTier: true, reasons: tier.reasons, crossModelRequired: true, satisfied, revision, chainTrustworthy, truncationDetected, skippedOwnRails });
     process.exit(satisfied ? 0 : 2);
   }
   if (satisfied) {
@@ -988,10 +1046,17 @@ try {
 }
 let tier;
 try {
-  tier = classifyTrustRootTier({ changedFiles: changed, tickets: loadTicketsForTier(values.dir, root, values.base) });
+  // #1180: the recorder always has --ticket, so that ticket's own new rails
+  // (absent from the base tip) apply after merge and do not tier this change.
+  tier = classifyTrustRootTier({
+    changedFiles: changed,
+    tickets: loadTicketsForTier(values.dir, root, values.base),
+    ownTicket: ownTicketAtBase(root, values.base, values.ticket, values.dir),
+  });
 } catch (err) {
   opError(`cannot determine trust-root tier: ${err.message}`);
 }
+printSkippedOwnRails(tier, values.ticket, values.base);
 const requireCrossModel = tier.isTrustRootTier;
 if (tier.isTrustRootTier) {
   console.error(`trust-root tier: cross-model adversarial approve REQUIRED (base ${values.base}). Reasons:`);
