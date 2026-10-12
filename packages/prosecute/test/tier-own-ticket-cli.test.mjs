@@ -10,14 +10,15 @@
 //   - an own rail already on the base still tiers, and the base copy's rails
 //     still apply when HEAD narrows them;
 //   - base rails come from the canonical store and an in-repo --dir table at
-//     the base, only for the named ticket; a --dir table new on the branch or
-//     outside the repo adds none, and a malformed base table exits 1;
+//     the base, only for the named ticket, found through a symlinked or
+//     case-variant --dir; a --dir table new on the branch or outside the repo
+//     adds none, and a malformed base table exits 1;
 //   - every --json branch, the no-key one included, carries skippedOwnRails;
 //   - the recorder on an own-new-rail change with a dry panel and no attestation
 //     exits 0 and writes no p5-cross-model-missing entry.
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -90,6 +91,15 @@ const ownNewRailRepo = () => scratchRepo({
   headTickets: [T(), T({ id: 'T2', rails: ['test/own/**'] })],
   headFiles: { 'test/own/red.test.mjs': 'export const red = 1;\n' },
 });
+
+// Platform capabilities the alias tests need, probed once in a scratch dir.
+function probe(fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'adlc-tier-own-ticket-probe-'));
+  fixtureDirs.add(dir);
+  try { return fn(dir); } catch { return false; }
+}
+const CAN_SYMLINK = probe((dir) => { mkdirSync(join(dir, 'a')); symlinkSync('a', join(dir, 'b'), 'dir'); return true; });
+const CASE_INSENSITIVE = probe((dir) => { writeFileSync(join(dir, 'probe'), ''); return existsSync(join(dir, 'PROBE')); });
 
 const tierCheck = (dir, extra = []) =>
   runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', '.adlc', ...extra], dir);
@@ -190,6 +200,33 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', 'custom', '--ticket', 'T2', '--json'], dir);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout).skippedOwnRails, ['test/own/**']);
+  });
+
+  // The worktree read follows a symlinked or case-variant --dir, so the base
+  // read must find the same table; otherwise a base rail reads as new.
+  const aliasRepo = () => scratchRepo({
+    baseTickets: [],
+    headTickets: [],
+    baseFiles: { 'custom/tickets.json': JSON.stringify({ tickets: [T({ rails: ['docs/secret.md'] })] }), 'docs/secret.md': 'a\n' },
+    headFiles: { 'docs/secret.md': 'b\n' },
+  });
+  const viaDir = (dir, ticketDir) =>
+    runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', ticketDir, '--ticket', 'T1', '--json'], dir);
+
+  it('a symlinked --dir still finds the base table: its base rail tiers', { skip: !CAN_SYMLINK && 'symlinks unavailable here' }, () => {
+    const dir = aliasRepo();
+    symlinkSync('custom', join(dir, 'alias'), 'dir');
+    const r = viaDir(dir, 'alias');
+    assert.equal(r.status, 2, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).reasons, ['touches rails deny-path of ticket T1: docs/secret.md']);
+    assert.ok(!r.stderr.includes('skipped own new rail'), r.stderr);
+  });
+
+  it('a case-variant --dir still finds the base table on a case-insensitive filesystem', { skip: !CASE_INSENSITIVE && 'case-sensitive filesystem' }, () => {
+    const dir = aliasRepo();
+    const r = viaDir(dir, 'CUSTOM');
+    assert.equal(r.status, 2, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).reasons, ['touches rails deny-path of ticket T1: docs/secret.md']);
   });
 
   it('an out-of-repo --dir is not read at the base, the same containment rule as the ticket set', () => {

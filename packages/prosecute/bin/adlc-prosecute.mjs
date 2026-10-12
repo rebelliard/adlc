@@ -309,17 +309,38 @@ function readBaseTickets(root, revision) {
 }
 
 // The in-repo --dir ticket table (the third loadTicketsForTier source) as the
-// BASE tip has it. Same containment rule as loadTicketsForTier: an out-of-repo
-// --dir, or the canonical `.adlc`, contributes nothing here. A file absent at
-// the base contributes nothing; a present but malformed one throws.
+// BASE tip has it. A table outside the repository contributes nothing here,
+// since git cannot hold it at the base. A file absent at the base contributes
+// nothing; a present but malformed one throws.
 function readBaseDirTickets(root, base, dir) {
   if (!base) return [];
-  const resolvedDir = resolve(dir);
-  if (!isInsideRepo(root, resolvedDir) || resolvedDir === resolve(root, '.adlc')) return [];
-  const rel = relative(root, join(resolvedDir, 'tickets.json')).split(/[\\/]/).join('/');
+  const rel = baseTablePath(root, join(resolve(dir), 'tickets.json'));
+  if (rel === null) return [];
   const commit = git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: root }).trim();
   if (git(['ls-tree', '--name-only', commit, '--', rel], { cwd: root }).trim() === '') return [];
   return parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`);
+}
+
+// The repo-relative POSIX path at which git holds the worktree's --dir table,
+// or null when it lies outside the repository. The worktree read goes through
+// the filesystem, so it follows a symlinked --dir and the filesystem's case
+// rules; a plain string path here would miss the base copy behind such an
+// alias and read its rails as new. So an existing table is located with
+// realpath, the way the worktree read effectively finds it. A table absent from
+// the worktree keeps its literal path. The canonical `.adlc/tickets.json` may
+// come back too: reading it again only repeats rails readBaseTickets supplies.
+function baseTablePath(root, tablePath) {
+  let from = root;
+  let to = tablePath;
+  try {
+    to = realpathSync.native(tablePath);
+    from = realpathSync.native(root);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const rel = relative(from, to);
+  if (rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(/[\\/]/).join('/');
 }
 
 // The ticket under prosecution, as the BASE tip declares it (#1180). Its
