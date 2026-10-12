@@ -143,6 +143,7 @@ describe('adlc-prosecute tier-check (#326 CI trust-root gate)', () => {
     assert.equal(jj.crossModelRequired, true);
     assert.equal(jj.satisfied, false);
     assert.equal(jj.keyAvailable, false);
+    assert.deepEqual(jj.skippedOwnRails, []);
   });
 
   it('exits 0 once a distinct-provider approve bound to the tier-check revision is recorded', (t) => {

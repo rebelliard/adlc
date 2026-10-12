@@ -9,6 +9,10 @@
 //   - --ticket naming ANOTHER ticket still tiers on T2's rail;
 //   - an own rail already on the base still tiers, and the base copy's rails
 //     still apply when HEAD narrows them;
+//   - base rails come from the canonical store and an in-repo --dir table at
+//     the base, only for the named ticket; a --dir table new on the branch or
+//     outside the repo adds none, and a malformed base table exits 1;
+//   - every --json branch, the no-key one included, carries skippedOwnRails;
 //   - the recorder on an own-new-rail change with a dry panel and no attestation
 //     exits 0 and writes no p5-cross-model-missing entry.
 import { describe, it, after } from 'node:test';
@@ -175,6 +179,54 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', 'custom', '--ticket', 'T1'], dir);
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stderr, /non-array `tickets` field/);
+  });
+
+  it('an in-repo --dir table the base does not have yet contributes no base rails (not an error)', () => {
+    const dir = scratchRepo({
+      baseTickets: [],
+      headTickets: [],
+      headFiles: { 'custom/tickets.json': JSON.stringify({ tickets: [T({ id: 'T2', rails: ['test/own/**'] })] }), 'test/own/red.test.mjs': 'x\n' },
+    });
+    const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', 'custom', '--ticket', 'T2', '--json'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).skippedOwnRails, ['test/own/**']);
+  });
+
+  it('an out-of-repo --dir is not read at the base, the same containment rule as the ticket set', () => {
+    const dir = ownNewRailRepo();
+    const outside = mkdtempSync(join(tmpdir(), 'adlc-tier-own-ticket-outside-'));
+    fixtureDirs.add(outside);
+    writeFileSync(join(outside, 'tickets.json'), JSON.stringify({ tickets: [T({ id: 'T2', rails: ['test/own/**'] })] }));
+    const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', outside, '--ticket', 'T2', '--json'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).skippedOwnRails, ['test/own/**']);
+  });
+
+  it('base rails are only the named ticket\'s: another base ticket with the same glob tiers, the own copy is skipped', () => {
+    const dir = scratchRepo({
+      baseTickets: [T({ id: 'T9', rails: ['test/own/**'] })],
+      headTickets: [T({ id: 'T9', rails: ['test/own/**'] }), T({ id: 'T2', rails: ['test/own/**'] })],
+      headFiles: { 'test/own/red.test.mjs': 'x\n' },
+    });
+    const r = tierCheck(dir, ['--ticket', 'T2', '--json']);
+    assert.equal(r.status, 2);
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual(out.reasons, ['touches rails deny-path of ticket T9: test/own/**']);
+    assert.deepEqual(out.skippedOwnRails, ['test/own/**']);
+  });
+
+  it('the no-key --json output carries skippedOwnRails too', () => {
+    const dir = scratchRepo({
+      baseTickets: [T()],
+      headTickets: [T(), T({ id: 'T2', rails: ['test/own/**'] })],
+      headFiles: { 'test/own/red.test.mjs': 'x\n', 'packages/prosecute/lib/x.mjs': 'export const z = 1;\n' },
+    });
+    const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', '.adlc', '--ticket', 'T2', '--json'], dir, { ADLC_MANIFEST_KEY: '' });
+    assert.equal(r.status, 2);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.keyAvailable, false);
+    assert.deepEqual(out.reasons, ['touches enforcement package packages/prosecute/']);
+    assert.deepEqual(out.skippedOwnRails, ['test/own/**']);
   });
 });
 

@@ -72,9 +72,15 @@ describe('classifyTrustRootTier — a ticket\'s own new rails apply after merge 
     assert.deepEqual(r.skippedOwnRails, ['test/own/**']);
   });
 
+  it('a skipped rail is listed once however many changed files it matches', () => {
+    const r = classifyTrustRootTier({ changedFiles: ['test/own/a.test.mjs', 'test/own/b.test.mjs'], tickets: [own()], ownTicket: { id: 'T1', baseRails: [] } });
+    assert.deepEqual(r, { isTrustRootTier: false, reasons: [], skippedOwnRails: ['test/own/**'] });
+  });
+
   it('a malformed ownTicket (no usable id, or no baseRails array) skips nothing', () => {
     for (const ownTicket of [{}, { id: '' }, { id: '  ', baseRails: [] }, { id: 7, baseRails: [] }, null, { id: 'T1' }, { id: 'T1', baseRails: 'test/own/**' }]) {
-      const r = classifyTrustRootTier({ changedFiles: ['test/own/a.test.mjs'], tickets: [own()], ownTicket });
+      // The ticket carries the same id as ownTicket, so only the guard can stop the skip.
+      const r = classifyTrustRootTier({ changedFiles: ['test/own/a.test.mjs'], tickets: [own({ id: ownTicket?.id ?? 'T1' })], ownTicket });
       assert.equal(r.isTrustRootTier, true, `ownTicket ${JSON.stringify(ownTicket)} must not skip`);
       assert.deepEqual(r.skippedOwnRails, []);
     }
