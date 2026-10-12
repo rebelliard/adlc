@@ -231,9 +231,9 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
 });
 
 // Bind the transcript to `revision` and write a dry, converging passes input
-// (all under .adlc/, so the resolved revision stays stable).
-function writePasses(dir, ticket, revision) {
-  const adlc = join(dir, '.adlc');
+// (all under the ticket dir, so the resolved revision stays stable).
+function writePasses(dir, ticket, revision, ticketDir = '.adlc') {
+  const adlc = join(dir, ticketDir);
   writeFileSync(join(adlc, 'review.txt'), [
     `ticket: ${ticket}`,
     `reviewed revision: ${revision}`,
@@ -258,13 +258,14 @@ function writePasses(dir, ticket, revision) {
   }));
 }
 
-function record(dir, ticket) {
-  writePasses(dir, ticket, 'placeholder');
-  const input = JSON.parse(readFileSync(join(dir, '.adlc', 'passes.json'), 'utf8'));
-  const revision = resolveProsecutionRevision({ cwd: dir, dir: '.adlc', input, inputPath: '.adlc/passes.json' });
+function record(dir, ticket, ticketDir = '.adlc') {
+  const inputPath = `${ticketDir}/passes.json`;
+  writePasses(dir, ticket, 'placeholder', ticketDir);
+  const input = JSON.parse(readFileSync(join(dir, ticketDir, 'passes.json'), 'utf8'));
+  const revision = resolveProsecutionRevision({ cwd: dir, dir: ticketDir, input, inputPath });
   assert.ok(revision, 'the recorder resolves a revision');
-  writePasses(dir, ticket, revision);
-  return runBin(['--input', '.adlc/passes.json', '--ticket', ticket, '--base', 'main', '--dir', '.adlc', '--author-provider', 'anthropic', '--json'], dir);
+  writePasses(dir, ticket, revision, ticketDir);
+  return runBin(['--input', inputPath, '--ticket', ticket, '--base', 'main', '--dir', ticketDir, '--author-provider', 'anthropic', '--json'], dir);
 }
 
 const manifest = (dir) => {
@@ -289,5 +290,21 @@ describe('the recorder passes its --ticket as ownTicket (#1180)', () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /touches rails deny-path of ticket T2: test\/own\/\*\*/);
     assert.match(manifest(dir), /"type":"p5-cross-model-missing"/);
+  });
+
+  it('a malformed --dir table at the base fails the recorder closed (exit 1), not "no base rails"', () => {
+    // The recorder reads the --dir table's ticket set from the worktree, so the
+    // base read in ownTicketAtBase is the only thing that sees the bad base copy.
+    const placeholders = { 'custom/review.txt': 'placeholder\n', 'custom/prompt.txt': 'review prompt\n', 'custom/inputs.txt': 'reviewed input packet\n' };
+    const dir = scratchRepo({
+      baseTickets: [],
+      headTickets: [],
+      baseFiles: { 'custom/tickets.json': '{"tickets": null}', ...placeholders },
+      headFiles: { 'custom/tickets.json': JSON.stringify({ tickets: [T({ rails: ['src/**'] })] }), 'src/app.mjs': 'v2\n' },
+    });
+    const r = record(dir, 'T1', 'custom');
+    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+    assert.match(r.stderr, /non-array `tickets` field/);
+    assert.ok(!r.stderr.includes('skipped own new rail'), r.stderr);
   });
 });
