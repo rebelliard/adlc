@@ -160,21 +160,21 @@ test('filesystem-derived surface counts match marketing facts for every harness'
   assert.equal(surfaceCount(cursor, 'skills'), listEntries('plugins/adlc-cursor/skills', { dirs: true }).length);
   assert.equal(surfaceCount(cursor, 'rules'), listEntries('plugins/adlc-cursor/rules', { files: true, ext: '.mdc' }).length);
 
-  // OpenCode — command/agent dirs on disk; tools from builder return maps; hooks from plugin export keys
+  // OpenCode — command/agent dirs on disk; tools from v2 Tool.Info names; hooks from ctx.tool.hook registrations
   const oc = integrationFor('opencode');
   assert.equal(surfaceCount(oc, 'commands'), listEntries('plugins/adlc-opencode/command', { files: true, ext: '.md' }).length);
   assert.equal(surfaceCount(oc, 'agents'), listEntries('plugins/adlc-opencode/agent', { files: true, ext: '.md' }).length);
   const ocToolNames = ['gate-tool.mjs', 'prosecute-tool.mjs'].flatMap((file) => {
     const src = readFileSync(path.join(repoRoot, 'plugins/adlc-opencode/lib', file), 'utf8');
-    const match = src.match(/return \{\s*([a-z_]+):\s*\{/m);
+    const match = src.match(/return \{\s*name:\s*'([a-z_]+)',/m);
     return match ? [match[1]] : [];
   });
   assert.deepEqual(ocToolNames.sort(), ['adlc_gate', 'adlc_prosecute']);
   assert.equal(surfaceCount(oc, 'tools'), ocToolNames.length);
   const ocIndex = readFileSync(path.join(repoRoot, 'plugins/adlc-opencode/index.mjs'), 'utf8');
-  assert.match(ocIndex, /\.\.\.buildGateTool\(/);
-  assert.match(ocIndex, /\.\.\.buildProsecuteTool\(/);
-  const ocBeforeHooks = [...ocIndex.matchAll(/['"]tool\.execute\.before['"]\s*:/g)];
+  assert.match(ocIndex, /buildGateTool\(/);
+  assert.match(ocIndex, /buildProsecuteTool\(/);
+  const ocBeforeHooks = [...ocIndex.matchAll(/await ctx\.tool\.hook\(\s*['"]execute\.before['"]/g)];
   // Marketing surfaces the enforcing before-hook(s) as the control tile.
   assert.equal(surfaceCount(oc, 'hooks'), ocBeforeHooks.length);
 
@@ -272,6 +272,20 @@ test('OpenCode marketing facts claim enforce-by-default rails', () => {
   assert.match(oc?.tagline ?? '', /Enforce-by-default|enforcing/i);
   assert.match(oc?.enforcement.session.body ?? '', /Enforcing by default/i);
   assert.ok(oc?.operate.lines.includes('npm test --workspace=@adlc/opencode'));
+});
+
+test('OpenCode marketing facts state the version floor the package and CI actually enforce', () => {
+  const oc = integrationFor('opencode');
+  const peer = JSON.parse(readFileSync(path.join(repoRoot, 'plugins/adlc-opencode/package.json'), 'utf8')).peerDependencies['@opencode/plugin'];
+  const [, floor, ceiling] = /^>=(\d+\.\d+\.\d+) <(\d+)$/.exec(peer) ?? [];
+  assert.ok(floor, `peer range ${peer} has the shape >=X.Y.Z <N`);
+  const ci = readFileSync(path.join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  assert.ok(ci.includes(`@opencode/cli@${floor}`), 'CI pins the same OpenCode version the docs call the floor');
+  assert.ok(oc.note.includes(`Requires OpenCode >= ${floor} `), 'the install note names the floor');
+  assert.ok(oc.note.includes(`@opencode/plugin ${peer}`), 'the install note quotes the real peer range');
+  assert.ok(oc.enforcement.session.body.includes(`on OpenCode >= ${floor}.`), 'the enforcement claim names the floor');
+  assert.ok(oc.hero.identity.includes(`real OpenCode ${floor.split('.')[0]} binary`), 'the live-proof claim names the supported major');
+  assert.equal(Number(floor.split('.')[0]) + 1, Number(ceiling), 'the supported range is exactly one major');
 });
 
 test('Pi marketing facts emphasize proactive/reactive gates and team install', () => {
