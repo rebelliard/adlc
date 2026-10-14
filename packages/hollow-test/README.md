@@ -34,7 +34,7 @@ hollow-test --test-cmd "node --test test/" [options]
 | Code | Meaning |
 |------|---------|
 | `0` | Gate passes — all mutants were killed. |
-| `1` | Operational error — dirty working tree, not a git repo, bad arguments, **nothing to mutate** (the diff contains no eligible source files and neither `--target` nor `--rails` was given), or a **selected file received no mutation budget** (see below). |
+| `1` | Operational error — dirty working tree, not a git repo, bad arguments, no usable `typescript` for a TypeScript target, a target that does not parse unmutated, **nothing to mutate** (the diff contains no eligible source files and neither `--target` nor `--rails` was given), or a **selected file received no mutation budget** (see below). |
 | `2` | Gate fails — one or more mutants survived (hollow coverage). |
 
 ### `--max` too small for the diff: a starved file fails closed

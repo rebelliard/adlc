@@ -75,9 +75,11 @@ Options:
   --rails <ticket-file> Path to a ticket JSON file; its declared "rails"
                         globs are expanded against tracked files and added
                         as mutation targets (repeatable).
-                        Source: JS, TS, TSX and JSX (not declaration files).
   --json                Machine-readable JSON output
   --help                Show this help
+
+Source files: JavaScript (.js/.mjs/.cjs) and the TypeScript family
+(.ts/.mts/.cts/.tsx/.jsx), not declaration files.
 
 Exit codes:
   0  All mutants killed (gate passes)
@@ -664,12 +666,18 @@ for (const target of fileTargets) {
   if (typeScript !== null && typeScriptNotice === null) {
     typeScriptNotice = `hollow-test: TypeScript-family files are syntax-checked with typescript ${typeScript.version} (${typeScript.path})`;
   }
-  if (checkSyntax(target.absolutePath, cwd) !== 'valid') {
+  const syntax = checkSyntax(target.absolutePath, cwd);
+  if (syntax !== 'valid') {
     const checker = language === 'javascript'
       ? 'node --check'
       : typeScript !== null
         ? `typescript ${typeScript.version} (${typeScript.path})`
         : 'the syntax checker';
+    if (syntax === 'unknown') {
+      opError(
+        `${target.file} could not be syntax-checked (${checker} returned no verdict), so its mutants cannot be judged`
+      );
+    }
     opError(
       `${target.file} does not parse unmutated with ${checker}, so its mutants cannot be judged`
     );

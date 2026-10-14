@@ -69,7 +69,7 @@ in the report, but only killed or surviving mutants spend the file's quota.
 
 <div style={{ display: 'grid', gap: '0.25rem' }}>
   <span style={{ color: 'var(--adlc-pass)' }}>**0**: gate passes. Every generated mutant was killed by the suite.</span>
-  <span style={{ color: 'var(--adlc-wish)' }}>**1**: operational error. Dirty tree, not a git repo, bad arguments, non-green baseline, nothing eligible to mutate with no `--target`/`--rails`, or a selected file received no mutation budget (see below).</span>
+  <span style={{ color: 'var(--adlc-wish)' }}>**1**: operational error. Dirty tree, not a git repo, bad arguments, non-green baseline, no usable `typescript` for a TypeScript target, a target that does not parse unmutated, nothing eligible to mutate with no `--target`/`--rails`, or a selected file received no mutation budget (see below).</span>
   <span style={{ color: 'var(--adlc-fail)' }}>**2**: gate fails. One or more mutants survived (hollow coverage).</span>
 </div>
 

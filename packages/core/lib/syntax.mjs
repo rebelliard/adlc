@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, parse } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const JAVASCRIPT_EXT_RE = /\.(?:js|mjs|cjs)$/i;
@@ -21,13 +21,13 @@ export function syntaxLanguage(file) {
 
 function typeScriptCandidates(filePath) {
   const candidates = [];
-  let dir = dirname(filePath);
-  const root = parse(dir).root;
+  let dir = dirname(resolve(filePath));
   while (true) {
     const packagePath = join(dir, 'node_modules', 'typescript', 'package.json');
     if (existsSync(packagePath)) candidates.push({ dir, packagePath });
-    if (dir === root) break;
-    dir = dirname(dir);
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
   return candidates;
 }
@@ -64,7 +64,8 @@ function inspectTypeScript(filePath) {
  * package or the cwd: pnpm and nested workspaces put the compiler next to the
  * code that uses it. A package without the API is skipped, not fatal —
  * TypeScript 7 is the native port (`main: null`, no JS API), and this
- * repository's own apps/docs pins it below a root 5.x.
+ * repository's own apps/docs pins it below a root 5.x. A relative file path is
+ * resolved against the caller's current working directory before that walk.
  *
  * @param {string} filePath
  * @returns {{ path: string, version: string } | null}
@@ -91,7 +92,7 @@ export function resolveTypeScript(filePath) {
  * (syntax-check-typescript.mjs), so no @adlc package depends on a parser
  * (CONVENTIONS rule 1) and a parser crash cannot take the caller down with it.
  *
- * @param {string} filePath absolute path to the (possibly mutated) file
+ * @param {string} filePath path to the (possibly mutated) file; relative paths use cwd
  * @param {string} cwd
  * @param {string} [execPath] node binary to check with; overridable for tests
  * @returns {'valid'|'invalid'|'unknown'}

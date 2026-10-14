@@ -6,6 +6,11 @@ const VALID = 0;
 const INVALID = 65;
 const CANNOT_DECIDE = 3;
 
+function cannotDecide(message) {
+  console.error(`adlc syntax check: ${message}`);
+  process.exit(CANNOT_DECIDE);
+}
+
 try {
   const [{ readFileSync }, { createRequire }, { dirname, extname, join }, { resolveTypeScript }] = await Promise.all([
     import('node:fs'),
@@ -14,12 +19,12 @@ try {
     import('./syntax.mjs'),
   ]);
   const file = process.argv[2];
-  if (!file) process.exit(CANNOT_DECIDE);
+  if (!file) cannotDecide('no file was provided');
   const resolved = resolveTypeScript(file);
-  if (resolved === null) process.exit(CANNOT_DECIDE);
+  if (resolved === null) cannotDecide(`typescript could not be resolved from ${file}`);
 
   const ts = createRequire(import.meta.url)(resolved.path);
-  const name = join(dirname(file), `.__adlc_syntax__${extname(file)}`);
+  const name = join(dirname(file), `.__adlc_syntax__${extname(file).toLowerCase()}`);
   const text = readFileSync(file, 'utf8');
   const sourceFile = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
   const host = {
@@ -40,8 +45,8 @@ try {
     host,
   });
   const held = program.getSourceFile(name);
-  if (held === undefined) process.exit(CANNOT_DECIDE);
+  if (held === undefined) cannotDecide(`typescript did not retain ${file}`);
   process.exit(program.getSyntacticDiagnostics(held).length === 0 ? VALID : INVALID);
-} catch {
-  process.exit(CANNOT_DECIDE);
+} catch (err) {
+  cannotDecide(err instanceof Error ? err.message : String(err));
 }
