@@ -7,7 +7,10 @@
 
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { resolve, relative, isAbsolute, sep } from 'node:path';
-import { parseArgs, pass, gateFail, opError, printJson } from '@adlc/core';
+import {
+  parseArgs, pass, gateFail, opError, printJson, checkSyntax,
+  resolveTypeScript, syntaxCheckProblem, syntaxLanguage,
+} from '@adlc/core';
 import { gitDiff, isDirty, isGitRepo, resolveBase, mutate, git, repoRoot } from '@adlc/core';
 import {
   filterTargetFiles, buildFileTargets, readFileSafe, fileChangeIsCommentOnly, fileChangeIsVersionOnly,
@@ -72,6 +75,7 @@ Options:
   --rails <ticket-file> Path to a ticket JSON file; its declared "rails"
                         globs are expanded against tracked files and added
                         as mutation targets (repeatable).
+                        Source: JS, TS, TSX and JSX (not declaration files).
   --json                Machine-readable JSON output
   --help                Show this help
 
@@ -642,6 +646,37 @@ if (starvedByBudget.length > 0) {
     `--max to at least ${mutableExplicitFiles.length}, or reduce the number of ` +
     'explicit --target/--rails files'
   );
+}
+
+// Validate every original before the first mutation. If an original does not
+// parse, a mutant's parse result cannot be compared with a known-good baseline;
+// stopping here also guarantees that a missing TypeScript parser never leaves a
+// target briefly changed on disk.
+let typeScriptNotice = null;
+for (const target of fileTargets) {
+  // An unreadable file keeps its own reporting path in the mutation loop below
+  // (#658); judging its syntax here would misreport it as "does not parse".
+  if (readFileSafe(target.absolutePath) === null) continue;
+  const problem = syntaxCheckProblem(target.absolutePath);
+  if (problem !== null) opError(problem.replace(target.absolutePath, target.file));
+  const language = syntaxLanguage(target.absolutePath);
+  const typeScript = language === 'typescript' ? resolveTypeScript(target.absolutePath) : null;
+  if (typeScript !== null && typeScriptNotice === null) {
+    typeScriptNotice = `hollow-test: TypeScript-family files are syntax-checked with typescript ${typeScript.version} (${typeScript.path})`;
+  }
+  if (checkSyntax(target.absolutePath, cwd) !== 'valid') {
+    const checker = language === 'javascript'
+      ? 'node --check'
+      : typeScript !== null
+        ? `typescript ${typeScript.version} (${typeScript.path})`
+        : 'the syntax checker';
+    opError(
+      `${target.file} does not parse unmutated with ${checker}, so its mutants cannot be judged`
+    );
+  }
+}
+if (typeScriptNotice !== null) {
+  (useJson ? console.error : console.log)(typeScriptNotice);
 }
 
 // ── SIGINT handler: track which file is currently mutated so we can restore ──

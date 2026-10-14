@@ -147,12 +147,23 @@ hollow-test --test-cmd "node --test test/*.test.mjs" --json
 
 ## What is mutated (and what is skipped)
 
-Mutation applies to plain JavaScript only: `.mjs`, `.cjs`, `.js`. This is an
-**allow-list**. TypeScript and JSX (`.ts`, `.mts`, `.cts`, `.tsx`, `.jsx`),
-Python, CSS and everything else are excluded, because the operators are
-text-based and cannot tell a comparison from a type argument or a JSX
-delimiter — `Promise<unknown>` becomes the invalid `Promise>=unknown>`, and a
-parse failure is currently scored as a *killed* mutant. See issue #293.
+Mutation applies to JavaScript and the TypeScript family: `.mjs`, `.cjs`,
+`.js`, `.ts`, `.mts`, `.cts`, `.tsx`, and `.jsx`. This is an **allow-list**;
+TypeScript declaration files (`.d.ts`, `.d.mts`, `.d.cts`), Python, CSS, and
+everything else are excluded. A source glob cannot opt a declaration file in,
+because declarations contain no runtime behavior for a test to observe.
+
+TypeScript-family files are parsed with the nearest usable `typescript` package
+from the repository under test. Install it in a project whose diff includes
+those files:
+
+```sh
+npm i -D typescript
+```
+
+The resolver walks toward the filesystem root and accepts the TypeScript 5.x or
+6.x JavaScript parser API. It skips TypeScript 7 native packages, which do not
+expose that API, and continues looking in a parent workspace.
 
 A file is also skipped when a path **segment** is `test`, `tests`, `spec`,
 `specs`, or `__tests__`, or when its **basename** matches a `node --test`
@@ -225,12 +236,20 @@ If **every** mutant in a run is invalid, hollow-test exits **1** (operational
 failure) rather than passing: no assertion was exercised, so the run proves
 nothing.
 
-Validation uses `node --check`, so no parser dependency is added and the real
-file extension and package type are honoured. Both the syntax check and the test run are **tri-state** — `valid`, `invalid`, or `unknown`. "Could not
-determine" never collapses into "valid": if the checker is killed, times out, or
-cannot spawn, the run fails operationally rather than guessing. The same applies to the test command itself: a spawn failure (EAGAIN, ENOMEM) is not a timeout, and a timeout is the only non-completion that counts as a kill. A kill must mean the tests ran and failed. Assuming
-validity would run the test command against unparseable source, whose non-zero
-exit is then scored as a kill — the very path this closes.
+Before writing any mutant, hollow-test checks every unmutated target and exits
+1 if it does not parse. JavaScript uses `node --check`; the TypeScript family
+uses the repository's `typescript`. No `@adlc` package adds a parser dependency.
+Both the syntax check and the test run are **tri-state** — `valid`, `invalid`, or
+`unknown`. "Could not determine" never collapses into "valid": if the checker is
+killed, times out, or cannot spawn, the run fails operationally rather than
+guessing. The same applies to the test command itself: a spawn failure (EAGAIN,
+ENOMEM) is not a timeout, and a timeout is the only non-completion that counts as
+a kill. A kill must mean the tests ran and failed.
+
+This check is syntactic, not a type check: a mutant that only breaks types counts
+as valid. TypeScript's parser also accepts a few invalid regular-expression
+bodies that V8 rejects. A diff that changes only types generates no mutant and
+exits 1, like an import-only change.
 
 The all-invalid guard is applied **per file**, not just globally. A global check
 passes the moment any other file yields a kill, which would let an explicitly
