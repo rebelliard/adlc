@@ -61,6 +61,10 @@ counts as valid. TypeScript's parser also accepts a few invalid regular-expressi
 bodies that V8 rejects. A diff that changes only types has no mutant and exits 1,
 like an import-only change.
 
+A mutant that does not parse does not use a budget slot; hollow-test tries the
+next candidate, up to 8 tries for each slot. Invalid candidates remain visible
+in the report, but only killed or surviving mutants spend the file's quota.
+
 ## Exit codes
 
 <div style={{ display: 'grid', gap: '0.25rem' }}>

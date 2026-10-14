@@ -231,6 +231,9 @@ This matters because a kill is inferred from a non-zero exit, and a file that
 does not parse also exits non-zero. Counting such a mutant as *killed* fakes
 coverage; counting it as *survived* blames the tests for code that was never
 valid. It is reported in its own `invalid` bucket in both the table and JSON.
+An invalid mutant does not use a budget slot; hollow-test tries the next
+candidate, up to 8 tries for each slot. This keeps the run bounded without
+letting an early invalid candidate consume the only chance to exercise a test.
 
 If **every** mutant in a run is invalid, hollow-test exits **1** (operational
 failure) rather than passing: no assertion was exercised, so the run proves
