@@ -24,12 +24,52 @@ composes them for a batch.
 ## 0. Preconditions (5 minutes, all mechanical)
 
 ```bash
+SP=<your scratchpad directory>  # every $SP/… path below writes here; never leave it unset
 git status --short            # main checkout must be clean
 git fetch -q origin main:refs/remotes/origin/main
 adlc --version                # toolkit installed (>= scripts/toolkit-floor.json)
 adlc ticket store status --json   # backend: directory, pendingTransactions: []
 gh auth status
 ```
+
+**The `WIP` claim label — runs on other machines may be live.** This skill can run on
+several machines at once against the same repo. The only coordination between them is the
+`WIP` label plus a claim comment on each issue a run picks (§1 "Claim"). Make sure the
+label exists:
+
+```bash
+gh label list --limit 500 --json name --jq '.[].name' | grep -qx WIP \
+  || gh label create WIP --description "claimed by an issue-lanes run" --color FBCA04
+```
+
+(List the labels; don't use `--search`. The search index lags, so it returned nothing
+right after the label was created.)
+
+Then sweep for **stale claims**: open `WIP` issues with no OPEN PR that closes them, and
+whose latest claim comment is older than 48 hours (or that have no claim comment at all).
+`closedByPullRequestsReferences` carries no PR state, so the sweep cross-checks it against
+the open PR numbers:
+
+```bash
+cat > $SP/wip-sweep.jq <<'EOF'
+.[]
+| select(any(.closedByPullRequestsReferences[]; .number as $n | $open | index($n)) | not)
+| ([.comments[] | select(.body | startswith("issue-lanes claim — package:")) | .createdAt] | last) as $claimed
+| select($claimed == null or $claimed < $cutoff)
+| "#\(.number)\tclaimed \($claimed // "with no claim comment")\t\(.title)"
+EOF
+OPEN_PRS=$(gh pr list --state open --limit 200 --json number --jq '[.[].number]')
+CUTOFF=$(date -u -v-48H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '48 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+gh issue list --state open --label WIP --limit 100 \
+  --json number,title,closedByPullRequestsReferences,comments \
+  | jq -r --argjson open "$OPEN_PRS" --arg cutoff "$CUTOFF" -f $SP/wip-sweep.jq
+```
+
+Print anything it lists to the user as a WARNING — most likely a run that crashed or was
+abandoned — and leave it alone. The operator clears stale labels by hand
+(`gh issue edit <n> --remove-label WIP`). A run never removes a `WIP` label it did not add
+itself, because a label older than 48 hours can still belong to a slow lane on another
+machine.
 
 **Rail-freeze pre-check — do this before choosing anything.** As of 2026-09-10 the
 ceremony below HAS ALREADY MERGED: `origin/main`'s `.adlc/config.json` carries
@@ -66,13 +106,63 @@ their failed `rails-guard` jobs after the ceremony merges (no new commit needed)
 
 ```bash
 gh issue list --state open --limit 400 --json number,title,labels \
-  --jq '.[] | "\(.number)\t\(.labels|map(.name)|join(","))\t\(.title)"' > $SP/issues.tsv
+  --jq '.[] | select(.labels|map(.name)|index("WIP")|not)
+        | "\(.number)\t\(.labels|map(.name)|join(","))\t\(.title)"' > $SP/issues.tsv
+```
+
+Issues labelled `WIP` are claimed by another run (on this machine or another one) and are
+never candidates.
+
+Next, build **TAKEN-PACKAGES**: the packages another run, or an open PR, is already
+changing. It has two sources: the files of every open PR, and the claim comments on `WIP`
+issues whose PR does not exist yet. Every read **fails closed**. A failed `gh` call must
+never pass for "nothing is taken", so each response is captured and checked before it is
+parsed. Define these two functions once per shell; the claim step reuses both:
+
+```bash
+taken_packages() {
+  local prs wips
+  prs=$(gh pr list --state open --json number,files --limit 500) || return 1
+  wips=$(gh issue list --state open --label WIP --limit 500 --json comments) || return 1
+  # A read that hits its limit is a partial view, not a complete one.
+  [ "$(printf '%s' "$prs" | jq length)" -lt 500 ] && [ "$(printf '%s' "$wips" | jq length)" -lt 500 ] || return 1
+  { printf '%s' "$prs" | jq -r '.[].files[].path' | grep -o -E '^(packages|plugins)/[^/]+'
+    printf '%s' "$wips" | jq -r '.[].comments[].body' \
+      | grep -o -E '^issue-lanes claim — package: [^,]+' | sed 's/.*package: //'
+  } | sort -u
+}
+
+claim() {   # claim <issue> <packages/pkg | plugins/plugin> [lane-sibling]
+  local labels taken
+  labels=$(gh issue view "$1" --json labels --jq '.labels[].name') \
+    || { echo "READ FAILED — drop #$1"; return 1; }
+  if printf '%s\n' "$labels" | grep -qx WIP; then echo "TAKEN — drop #$1"; return 1; fi
+  if [ "$3" != lane-sibling ]; then
+    taken=$(taken_packages) || { echo "READ FAILED — drop #$1"; return 1; }
+    if printf '%s\n' "$taken" | grep -qxF "$2"; then echo "PACKAGE TAKEN ($2) — drop #$1"; return 1; fi
+  fi
+  gh issue edit "$1" --add-label WIP || { echo "LABEL FAILED — drop #$1"; return 1; }
+  if gh issue comment "$1" --body "issue-lanes claim — package: $2, host: $(hostname -s), $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     && gh issue view "$1" --json labels --jq '.labels[].name' | grep -qx WIP; then
+    echo "CLAIMED #$1"
+  elif gh issue edit "$1" --remove-label WIP; then
+    echo "CLAIM INCOMPLETE — label removed, drop #$1"; return 1
+  else
+    echo "CLAIM INCOMPLETE, CLEANUP FAILED — run by hand: gh issue edit $1 --remove-label WIP"; return 1
+  fi
+}
+
+taken_packages > $SP/taken-packages.txt \
+  || echo "ABORT — could not read open PRs or WIP claims; do not select from a partial view"
 ```
 
 Selection rules, in order:
 1. `bug` + `P1-high` (or the user's `--label`), class **false-green** first — that is the
    product's signature risk.
-2. **One lane per package.** Two issues in the same package go in ONE lane or wait.
+2. **One lane per package, across every run.** Two issues in the same package go in ONE
+   lane or wait. A candidate whose package is in TAKEN-PACKAGES is skipped: another
+   machine, or an open PR, is working there, and two branches in one package are a rebase
+   conflict at best and a mutation-gate collision at worst.
 3. **Check tiering per candidate.** `packages/prosecute/lib/tier.mjs` tiers a change on
    three things, and nothing else: its package-prefix lists (`ENFORCEMENT_PREFIXES`,
    `PRODUCER_PREFIXES`), its `TRUST_ROOT_FILES` list (all three summarised in §4b), and the
@@ -95,6 +185,42 @@ Selection rules, in order:
 
 Read the full body of each finalist (`gh issue view N --json body`). The audit-filed issues
 carry a `Recommendation` paragraph — that is the design seed for the ticket.
+
+### Claim the finalists — before any worktree, ticket, or close
+
+Claim every finalist, including one you are about to close as premise-stale (rule 5), so
+that no other run picks it up while you work. Selection can take many minutes, and the
+`issues.tsv` and `taken-packages.txt` snapshots are only as fresh as the moment they were
+written. So the claim re-reads both at the moment of writing: whether the issue is already
+`WIP`, and whether its package has been taken since. Only then does it write: the claim is
+`gh issue edit <n> --add-label WIP` plus the claim comment, run through `claim` from above:
+
+```bash
+claim <n> packages/<pkg>     # or plugins/<plugin>; one call per finalist
+```
+
+Only an issue that printed `CLAIMED` goes on to §2. Every other outcome drops the issue
+from this batch, and each leaves GitHub in a known state:
+- `TAKEN` or `PACKAGE TAKEN`: another run, or an open PR, was there first.
+- `READ FAILED`: nothing was written.
+- `LABEL FAILED`: nothing was written.
+- `CLAIM INCOMPLETE`: the label went on, but the comment or the verification failed, so
+  `claim` took the label off again.
+
+- `CLAIM INCOMPLETE, CLEANUP FAILED`: the label could not be taken off. Run the printed
+  command, or the issue and its package stay blocked for every run.
+
+When finalists share a package, rule 2 already put them in one lane. Claim the first issue
+normally and the rest with `claim <n> packages/<pkg> lane-sibling`, which skips only the
+package check (the package is taken by this lane's own first claim). The live `WIP`
+re-read on the issue itself still runs.
+
+The comment's exact form matters: TAKEN-PACKAGES and the §0 stale sweep both parse it.
+From this point on, every way a lane can end must leave the label in a known state:
+- **A PR opens**: keep `WIP`. The PR's `Closes #<n>` closes the issue on merge, so nothing
+  needs removing.
+- **No PR** (blocker, review loop not converged, premise stale): remove it (§4 lane prompt,
+  §5 close-out).
 
 ## 2. Worktrees (explicit commands — the tool shell is zsh)
 
@@ -327,6 +453,19 @@ final word — verify.
   counts, mutation-gate numbers, review rounds folded/refuted, commit SHAs, PR URL,
   AND the polled CI status — not just the lane's own local claim of it.
 - If push/PR was denied by permissions, give the user the exact commands per lane.
+- **Release the claim of every lane that ended without a PR, but only if the lane did not
+  release it.** Read the lane's report:
+  - If the lane says it removed `WIP`, do nothing. A `WIP` present now belongs to ANOTHER
+    run that claimed the freed issue since, and removing it would delete that run's live
+    claim.
+  - If the lane says the removal failed or was denied, or says nothing about it, check that
+    the latest `issue-lanes claim` comment on the issue is still this run's (same `host:`
+    and timestamp). Only then run `gh issue edit <n> --remove-label WIP` and post a
+    one-line reason.
+
+  A label left behind blocks the issue AND its package for every other run until someone
+  notices it in the 48-hour sweep. Lanes that opened a PR keep `WIP`; merging closes the
+  issue.
 - Save a `project` memory: lanes, ticket ids, blockers, anything non-obvious.
 - After the human merges: `adlc ticket complete <id>` is a base-branch admin act — rails-guard's
   contract-preservation check refuses `completed: true` on an existing ticket inside ANY PR, so
@@ -364,6 +503,21 @@ final word — verify.
     narrow case only, never as a general policy.
 
 ## Gotchas that are not in the ticket bodies
+
+- **What the `WIP` label guarantees, and what it does not.** It keeps runs that start
+  minutes apart, on any machines, off each other's issues and packages. It is a
+  check-then-act. `claim` narrows the window to the few seconds between its re-read and its
+  write, but it does NOT close it. Two runs that claim the same issue or package
+  within seconds of each other can both read "free" before either writes. Every run uses the same GitHub account,
+  so the label's history cannot tell you which machine owns an issue; the claim comment's
+  `host:` field can. The skill flags stale claims and never reclaims them.
+  Two more known limits:
+  - `gh` returns at most 100 `files` per PR and 100 `comments` per issue. A package
+    touched only past a PR's 100th file, or a claim posted after an issue's 100th comment,
+    is invisible to TAKEN-PACKAGES.
+  - Claim comments are trusted by their text, not their author. Anyone who can comment on
+    a `WIP` issue can mark a package as taken. That only makes runs skip work, never
+    collide, but if a package is skipped unexpectedly, read the comment's author.
 
 - **A GREEN PR IS NOT EVIDENCE `main` WILL BE GREEN AFTER IT MERGES.**
   `strict_required_status_checks_policy` evaluates up-to-dateness at MERGE TIME against
