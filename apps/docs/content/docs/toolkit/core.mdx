@@ -90,7 +90,8 @@ The rest of core is the deterministic machinery the gates share:
   tokens (`thoughtsTokenCount`), as Anthropic and OpenAI already do.
 - **Syntax**: `syntaxLanguage` identifies JavaScript and TypeScript-family files;
   `resolveTypeScript` finds a repository-local JavaScript parser API;
-  `checkSyntax` returns `valid`, `invalid`, or `unknown`; and
+  `checkSyntaxDetail` returns a verdict plus the cause of an `unknown` result;
+  `checkSyntax` returns only `valid`, `invalid`, or `unknown`; and
   `syntaxCheckProblem` explains when no checker is available. Core adds no
   TypeScript dependency.
 

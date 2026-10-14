@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const JAVASCRIPT_EXT_RE = /\.(?:js|mjs|cjs)$/i;
@@ -95,11 +95,14 @@ export function resolveTypeScript(filePath) {
  * @param {string} filePath path to the (possibly mutated) file; relative paths use cwd
  * @param {string} cwd
  * @param {string} [execPath] node binary to check with; overridable for tests
- * @returns {'valid'|'invalid'|'unknown'}
+ * @returns {{verdict:'valid'|'invalid'|'unknown', detail:string|null}}
  */
-export function checkSyntax(filePath, cwd, execPath = process.execPath) {
+export function checkSyntaxDetail(filePath, cwd, execPath = process.execPath) {
   const language = syntaxLanguage(filePath);
-  if (language === null) return 'unknown';
+  if (language === null) {
+    const extension = extname(filePath) || '(none)';
+    return { verdict: 'unknown', detail: `no syntax checker for ${extension}` };
+  }
   const args = language === 'javascript'
     ? ['--check', filePath]
     : [TYPESCRIPT_WORKER, filePath];
@@ -108,11 +111,29 @@ export function checkSyntax(filePath, cwd, execPath = process.execPath) {
     encoding: 'utf8',
     timeout: 30000,
   });
-  if (result.error || result.signal || typeof result.status !== 'number') return 'unknown';
-  if (language === 'javascript') return result.status === 0 ? 'valid' : 'invalid';
-  if (result.status === 0) return 'valid';
-  if (result.status === 65) return 'invalid';
-  return 'unknown';
+  if (result.error?.code === 'ETIMEDOUT') {
+    return { verdict: 'unknown', detail: 'timed out after 30s' };
+  }
+  if (result.error) return { verdict: 'unknown', detail: result.error.message };
+  if (result.signal) return { verdict: 'unknown', detail: `killed by ${result.signal}` };
+  if (typeof result.status !== 'number') return { verdict: 'unknown', detail: 'exit unknown' };
+  if (language === 'javascript') {
+    return { verdict: result.status === 0 ? 'valid' : 'invalid', detail: null };
+  }
+  if (result.status === 0) return { verdict: 'valid', detail: null };
+  if (result.status === 65) return { verdict: 'invalid', detail: null };
+  const lastError = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  const detail = lastError?.replace(/^adlc syntax check:\s*/, '') || `exit ${result.status}`;
+  return { verdict: 'unknown', detail };
+}
+
+/** The verdict-only compatibility surface used by existing callers. */
+export function checkSyntax(filePath, cwd, execPath = process.execPath) {
+  return checkSyntaxDetail(filePath, cwd, execPath).verdict;
 }
 
 export function syntaxCheckProblem(filePath) {

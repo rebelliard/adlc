@@ -8,7 +8,7 @@ import { readFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { checkSyntax } from '@adlc/core';
+import { checkSyntax, checkSyntaxDetail } from '@adlc/core';
 import { writeFileAtomic } from './inflight.mjs';
 
 export { checkSyntax };
@@ -315,9 +315,9 @@ export function runMutant(filePath, original, mutated, testCmd, timeoutMs, cwd) 
     // repository's own TypeScript parser for the TS family. Keeping resolution
     // in the repository under test avoids a runtime dependency while preserving
     // the real extension's grammar.
-    syntax = checkSyntax(filePath, cwd);
-    invalid = syntax === 'invalid';
-    if (syntax === 'valid') trial = runTest(testCmd, timeoutMs, cwd);
+    syntax = checkSyntaxDetail(filePath, cwd);
+    invalid = syntax.verdict === 'invalid';
+    if (syntax.verdict === 'valid') trial = runTest(testCmd, timeoutMs, cwd);
   } finally {
     // Always restore original content, even if the test run threw — and
     // atomically, for the same reason as the mutation write above.
@@ -329,10 +329,10 @@ export function runMutant(filePath, original, mutated, testCmd, timeoutMs, cwd) 
   // the tests for a mutation that was never valid code.
   // Could not determine validity — refuse to score it either way. The caller
   // turns this into an operational failure; guessing is what reopens #293.
-  if (syntax === 'unknown') {
+  if (syntax.verdict === 'unknown') {
     return {
       killed: false, invalid: false, undetermined: true,
-      reason: 'syntax check did not run', timedOut: false, exitCode: null,
+      reason: `syntax check did not run (${syntax.detail})`, timedOut: false, exitCode: null,
     };
   }
 

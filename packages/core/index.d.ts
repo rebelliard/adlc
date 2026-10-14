@@ -346,6 +346,10 @@ export type SyntaxLanguage = 'javascript' | 'typescript';
 export type SyntaxCheckResult = 'valid' | 'invalid' | 'unknown';
 export function syntaxLanguage(file: string): SyntaxLanguage | null;
 export function resolveTypeScript(filePath: string): { path: string; version: string } | null;
+export function checkSyntaxDetail(filePath: string, cwd: string, execPath?: string): {
+  verdict: SyntaxCheckResult;
+  detail: string | null;
+};
 export function checkSyntax(filePath: string, cwd: string, execPath?: string): SyntaxCheckResult;
 export function syntaxCheckProblem(filePath: string): string | null;
 

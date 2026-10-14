@@ -8,7 +8,7 @@
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { resolve, relative, isAbsolute, sep } from 'node:path';
 import {
-  parseArgs, pass, gateFail, opError, printJson, checkSyntax,
+  parseArgs, pass, gateFail, opError, printJson, checkSyntaxDetail,
   resolveTypeScript, syntaxCheckProblem, syntaxLanguage,
 } from '@adlc/core';
 import { gitDiff, isDirty, isGitRepo, resolveBase, mutate, git, repoRoot } from '@adlc/core';
@@ -666,16 +666,16 @@ for (const target of fileTargets) {
   if (typeScript !== null && typeScriptNotice === null) {
     typeScriptNotice = `hollow-test: TypeScript-family files are syntax-checked with typescript ${typeScript.version} (${typeScript.path})`;
   }
-  const syntax = checkSyntax(target.absolutePath, cwd);
-  if (syntax !== 'valid') {
+  const syntax = checkSyntaxDetail(target.absolutePath, cwd);
+  if (syntax.verdict !== 'valid') {
     const checker = language === 'javascript'
       ? 'node --check'
       : typeScript !== null
         ? `typescript ${typeScript.version} (${typeScript.path})`
         : 'the syntax checker';
-    if (syntax === 'unknown') {
+    if (syntax.verdict === 'unknown') {
       opError(
-        `${target.file} could not be syntax-checked (${checker} returned no verdict), so its mutants cannot be judged`
+        `${target.file} could not be syntax-checked with ${checker}: ${syntax.detail}, so its mutants cannot be judged`
       );
     }
     opError(
