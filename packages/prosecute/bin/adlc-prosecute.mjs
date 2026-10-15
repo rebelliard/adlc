@@ -325,15 +325,17 @@ function readBaseDirTickets(root, base, dir) {
   const viaHead = baseTablePath(root, literal);
   if (viaHead !== null) candidates.add(viaHead);
   const lexical = relative(root, literal);
-  if (!lexical.startsWith('..') && !isAbsolute(lexical)) {
-    const posix = lexical.split(/[\\/]/).join('/');
-    candidates.add(posix);
-    const viaBase = resolveAtBase(root, commit, posix);
-    if (viaBase !== null) candidates.add(viaBase);
-  }
+  if (!lexical.startsWith('..') && !isAbsolute(lexical)) candidates.add(lexical.split(/[\\/]/).join('/'));
   const tickets = [];
-  for (const rel of candidates) {
-    if (git(['ls-tree', '--name-only', commit, '--', rel], { cwd: root }).trim() === '') continue;
+  const read = new Set();
+  for (const candidate of candidates) {
+    // Follow the BASE tree's links (on the directory AND on tickets.json
+    // itself) so the symlink blob, whose content is a path, is never parsed.
+    const rel = resolveAtBase(root, commit, candidate);
+    if (rel === null || read.has(rel)) continue;
+    read.add(rel);
+    const entry = git(['ls-tree', commit, '--', rel], { cwd: root }).trim();
+    if (!/^100\d{3} blob /.test(entry)) continue;
     tickets.push(...parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`));
   }
   return tickets;

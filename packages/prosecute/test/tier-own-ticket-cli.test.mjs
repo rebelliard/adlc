@@ -307,6 +307,36 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     assert.deepEqual(JSON.parse(r.stdout).skippedOwnRails, ['docs/secret.md']);
   });
 
+  // A base tickets.json that is itself a symlink holds a path, not JSON.
+  const fileLinkRepo = (target) => {
+    const table = JSON.stringify({ tickets: [T({ rails: ['docs/secret.md'] })] });
+    const dir = scratchRepo({
+      baseTickets: [],
+      headTickets: [],
+      baseFiles: { 'real/tickets.json': table, 'docs/secret.md': 'a\n' },
+      headFiles: { 'docs/secret.md': 'b\n' },
+    });
+    const g = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+    g('checkout', '-q', 'main');
+    mkdirSync(join(dir, 'custom'));
+    symlinkSync(target, join(dir, 'custom', 'tickets.json'), 'file');
+    g('add', '-A'); g('commit', '-qm', 'base file link');
+    g('checkout', '-q', 'feat');
+    g('merge', '-q', '--no-edit', 'main');
+    return dir;
+  };
+
+  it('a base tickets.json symlink to an in-repo table is followed, not parsed as text: its rail tiers', { skip: !CAN_SYMLINK && 'symlinks unavailable here' }, () => {
+    const r = viaDir(fileLinkRepo('../real/tickets.json'), 'custom');
+    assert.equal(r.status, 2, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).reasons, ['touches rails deny-path of ticket T1: docs/secret.md']);
+  });
+
+  it('a base tickets.json symlink to an external target is skipped, not parsed as text', { skip: !CAN_SYMLINK && 'symlinks unavailable here' }, () => {
+    const r = viaDir(fileLinkRepo('/nonexistent/tickets.json'), 'custom');
+    assert.notEqual(r.status, 1, r.stderr);
+  });
+
   it('base rails are only the named ticket\'s: another base ticket with the same glob tiers, the own copy is skipped', () => {
     const dir = scratchRepo({
       baseTickets: [T({ id: 'T9', rails: ['test/own/**'] })],
