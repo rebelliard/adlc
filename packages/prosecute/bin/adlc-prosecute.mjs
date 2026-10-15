@@ -490,6 +490,24 @@ function mergeTicketsById(sources) {
   return [...unkeyed, ...byId.values()];
 }
 
+// `dir` canonicalized through the filesystem, or null when it lies outside the
+// repository or does not exist. Containment is judged on the REAL path: a
+// symlink inside the repo that points outside would pass a lexical check, and
+// its external table would then be read as if the repo held it. An absent dir
+// has no table to read, so null loses nothing.
+function canonicalInRepoDir(root, dir) {
+  let realDir;
+  let realRoot;
+  try {
+    realDir = realpathSync.native(resolve(dir));
+    realRoot = realpathSync.native(root);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    return null;
+  }
+  return isInsideRepo(realRoot, realDir) ? realDir : null;
+}
+
 function loadTicketsForTier(dir, root, base) {
   // UNION, never replace: rails from the base and from the worktree both apply.
   // The classifier ORs deny-paths across tickets, so adding a source can only
@@ -497,9 +515,9 @@ function loadTicketsForTier(dir, root, base) {
   // TIP deliberately (not the merge-base): a ticket added on the base after the
   // branch point still contributes its rails — widening only, so fail-safe.
   const sources = [readBaseTickets(root, base), readCanonicalTickets(root)];
-  const resolvedDir = resolve(dir);
-  if (isInsideRepo(root, resolvedDir) && resolvedDir !== resolve(root, '.adlc')) {
-    sources.push(readTicketArray(join(resolvedDir, 'tickets.json')));
+  const canonicalDir = canonicalInRepoDir(root, dir);
+  if (canonicalDir !== null && canonicalDir !== realpathSync.native(resolve(root, '.adlc'))) {
+    sources.push(readTicketArray(join(canonicalDir, 'tickets.json')));
   }
   return mergeTicketsById(sources);
 }
