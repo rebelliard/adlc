@@ -337,6 +337,22 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     assert.notEqual(r.status, 1, r.stderr);
   });
 
+  it('a base table path that is a directory fails closed instead of reading as absent', () => {
+    const table = JSON.stringify({ tickets: [T({ rails: ['docs/secret.md'] })] });
+    const dir = scratchRepo({
+      baseTickets: [],
+      headTickets: [],
+      baseFiles: { 'custom/tickets.json/keep': 'x\n', 'docs/secret.md': 'a\n' },
+      headFiles: { 'docs/secret.md': 'b\n' },
+    });
+    rmSync(join(dir, 'custom', 'tickets.json'), { recursive: true });
+    writeFile(dir, 'custom/tickets.json', table);
+    const g = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+    g('add', '-A'); g('commit', '-qm', 'replace dir with table');
+    const r = viaDir(dir, 'custom');
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+  });
+
   it('base rails are only the named ticket\'s: another base ticket with the same glob tiers, the own copy is skipped', () => {
     const dir = scratchRepo({
       baseTickets: [T({ id: 'T9', rails: ['test/own/**'] })],

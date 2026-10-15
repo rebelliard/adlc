@@ -335,7 +335,12 @@ function readBaseDirTickets(root, base, dir) {
     if (rel === null || read.has(rel)) continue;
     read.add(rel);
     const entry = git(['ls-tree', commit, '--', rel], { cwd: root }).trim();
-    if (!/^100\d{3} blob /.test(entry)) continue;
+    if (entry === '') continue;
+    // Present but not a regular file (a directory, a submodule): the table
+    // cannot be read, and treating it as absent would drop its base rails.
+    if (!/^100\d{3} blob /.test(entry)) {
+      throw new Error(`${rel} at base ${base} is not a regular file — tiering cannot proceed`);
+    }
     tickets.push(...parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`));
   }
   return tickets;
