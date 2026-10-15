@@ -250,6 +250,18 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     assert.ok(!r.stderr.includes('skipped own new rail'), r.stderr);
   });
 
+  it('an in-repo --dir whose tickets.json is a symlink to an out-of-repo file is not read either', { skip: !CAN_SYMLINK && 'symlinks unavailable here' }, () => {
+    const dir = scratchRepo({ baseTickets: [], headTickets: [], headFiles: { 'test/own/red.test.mjs': 'x\n' } });
+    const outside = mkdtempSync(join(tmpdir(), 'adlc-tier-own-ticket-outside-'));
+    fixtureDirs.add(outside);
+    writeFileSync(join(outside, 'tickets.json'), JSON.stringify({ tickets: [T({ id: 'T2', rails: ['test/own/**'] })] }));
+    mkdirSync(join(dir, 'custom'));
+    symlinkSync(join(outside, 'tickets.json'), join(dir, 'custom', 'tickets.json'), 'file');
+    const r = runBin(['tier-check', '--base', 'main', '--author-provider', 'anthropic', '--dir', 'custom', '--ticket', 'T2', '--json'], dir);
+    assert.ok(!r.stderr.includes('skipped own new rail'), r.stderr);
+    assert.ok(!(JSON.parse(r.stdout || '{}').skippedOwnRails ?? []).includes('test/own/**'), r.stdout + r.stderr);
+  });
+
   it('base rails are only the named ticket\'s: another base ticket with the same glob tiers, the own copy is skipped', () => {
     const dir = scratchRepo({
       baseTickets: [T({ id: 'T9', rails: ['test/own/**'] })],

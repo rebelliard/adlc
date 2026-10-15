@@ -490,22 +490,24 @@ function mergeTicketsById(sources) {
   return [...unkeyed, ...byId.values()];
 }
 
-// `dir` canonicalized through the filesystem, or null when it lies outside the
-// repository or does not exist. Containment is judged on the REAL path: a
-// symlink inside the repo that points outside would pass a lexical check, and
-// its external table would then be read as if the repo held it. An absent dir
-// has no table to read, so null loses nothing.
-function canonicalInRepoDir(root, dir) {
-  let realDir;
+// The `tickets.json` under `dir`, canonicalized through the filesystem, or null
+// when it lies outside the repository or does not exist. Containment is judged
+// on the REAL path of the TABLE FILE, not just of its directory: a symlinked
+// --dir, or a `tickets.json` that is itself a symlink, passes a lexical check
+// while pointing outside, and the external table would be read as if the repo
+// held it (and its rails exempted as "new", since the base read excludes it). An
+// absent table is an empty store, so null loses nothing.
+function canonicalInRepoTable(root, dir) {
+  let realTable;
   let realRoot;
   try {
-    realDir = realpathSync.native(resolve(dir));
+    realTable = realpathSync.native(join(resolve(dir), 'tickets.json'));
     realRoot = realpathSync.native(root);
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
     return null;
   }
-  return isInsideRepo(realRoot, realDir) ? realDir : null;
+  return isInsideRepo(realRoot, realTable) ? realTable : null;
 }
 
 function loadTicketsForTier(dir, root, base) {
@@ -515,9 +517,9 @@ function loadTicketsForTier(dir, root, base) {
   // TIP deliberately (not the merge-base): a ticket added on the base after the
   // branch point still contributes its rails — widening only, so fail-safe.
   const sources = [readBaseTickets(root, base), readCanonicalTickets(root)];
-  const canonicalDir = canonicalInRepoDir(root, dir);
-  if (canonicalDir !== null && canonicalDir !== realpathSync.native(resolve(root, '.adlc'))) {
-    sources.push(readTicketArray(join(canonicalDir, 'tickets.json')));
+  const table = canonicalInRepoTable(root, dir);
+  if (table !== null && resolve(dir) !== resolve(root, '.adlc')) {
+    sources.push(readTicketArray(table));
   }
   return mergeTicketsById(sources);
 }
