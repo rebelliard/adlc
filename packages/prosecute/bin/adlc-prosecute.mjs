@@ -341,7 +341,7 @@ function readBaseDirTickets(root, base, dir) {
 
 // `rel` with every symlink in it followed AS THE BASE COMMIT HOLDS THEM (git
 // stores a link as a blob, mode 120000, holding its target), or null when a
-// link leaves the repository or the chain is too long. A non-link path comes
+// link leaves the repository (an absolute target, or `..` above the root) or the chain is too long. A non-link path comes
 // back unchanged.
 function resolveAtBase(root, commit, rel) {
   let parts = rel.split('/');
@@ -352,6 +352,9 @@ function resolveAtBase(root, commit, rel) {
       const entry = git(['ls-tree', commit, '--', prefix], { cwd: root }).trim();
       if (!entry.startsWith('120000 ')) continue;
       const target = git(['show', `${commit}:${prefix}`], { cwd: root }).trim();
+      // An absolute target leaves the repository; dropping its leading slash
+      // below would read an unrelated in-repo path as the table.
+      if (target.startsWith('/') || /^[A-Za-z]:/.test(target)) return null;
       const joined = [...parts.slice(0, i - 1), ...target.split('/'), ...parts.slice(i)];
       const next = [];
       for (const seg of joined) {
