@@ -314,11 +314,56 @@ function readBaseTickets(root, revision) {
 // nothing; a present but malformed one throws.
 function readBaseDirTickets(root, base, dir) {
   if (!base) return [];
-  const rel = baseTablePath(root, join(resolve(dir), 'tickets.json'));
-  if (rel === null) return [];
   const commit = git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`], { cwd: root }).trim();
-  if (git(['ls-tree', '--name-only', commit, '--', rel], { cwd: root }).trim() === '') return [];
-  return parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`);
+  // Every path the base could hold this table at, UNIONED: the HEAD-resolved
+  // one, the literal one, and the one the BASE tree's own symlinks lead to. A
+  // branch that retargets a symlinked --dir moves only the first; reading just
+  // that one would drop the rails the base freezes and re-read them as new.
+  // Extra candidates can only ADD base rails (fewer exemptions), never remove.
+  const literal = join(resolve(dir), 'tickets.json');
+  const candidates = new Set();
+  const viaHead = baseTablePath(root, literal);
+  if (viaHead !== null) candidates.add(viaHead);
+  const lexical = relative(root, literal);
+  if (!lexical.startsWith('..') && !isAbsolute(lexical)) {
+    const posix = lexical.split(/[\\/]/).join('/');
+    candidates.add(posix);
+    const viaBase = resolveAtBase(root, commit, posix);
+    if (viaBase !== null) candidates.add(viaBase);
+  }
+  const tickets = [];
+  for (const rel of candidates) {
+    if (git(['ls-tree', '--name-only', commit, '--', rel], { cwd: root }).trim() === '') continue;
+    tickets.push(...parseTicketTable(git(['show', `${commit}:${rel}`], { cwd: root }), `${rel} at base ${base}`));
+  }
+  return tickets;
+}
+
+// `rel` with every symlink in it followed AS THE BASE COMMIT HOLDS THEM (git
+// stores a link as a blob, mode 120000, holding its target), or null when a
+// link leaves the repository or the chain is too long. A non-link path comes
+// back unchanged.
+function resolveAtBase(root, commit, rel) {
+  let parts = rel.split('/');
+  for (let hops = 0; hops < 40; hops++) {
+    let resolvedLink = false;
+    for (let i = 1; i <= parts.length && !resolvedLink; i++) {
+      const prefix = parts.slice(0, i).join('/');
+      const entry = git(['ls-tree', commit, '--', prefix], { cwd: root }).trim();
+      if (!entry.startsWith('120000 ')) continue;
+      const target = git(['show', `${commit}:${prefix}`], { cwd: root }).trim();
+      const joined = [...parts.slice(0, i - 1), ...target.split('/'), ...parts.slice(i)];
+      const next = [];
+      for (const seg of joined) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') { if (next.length === 0) return null; next.pop(); } else next.push(seg);
+      }
+      parts = next;
+      resolvedLink = true;
+    }
+    if (!resolvedLink) return parts.join('/');
+  }
+  return null;
 }
 
 // The repo-relative POSIX path at which git holds the worktree's --dir table,

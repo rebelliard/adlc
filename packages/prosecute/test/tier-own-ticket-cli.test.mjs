@@ -262,6 +262,29 @@ describe('tier-check --ticket skips only that ticket\'s own new rails (#1180)', 
     assert.ok(!(JSON.parse(r.stdout || '{}').skippedOwnRails ?? []).includes('test/own/**'), r.stdout + r.stderr);
   });
 
+  it('a branch that retargets a symlinked --dir does not hide the rail the base table froze', { skip: !CAN_SYMLINK && 'symlinks unavailable here' }, () => {
+    const table = JSON.stringify({ tickets: [T({ rails: ['docs/secret.md'] })] });
+    const dir = scratchRepo({
+      baseTickets: [],
+      headTickets: [],
+      baseFiles: { 'custom/tickets.json': table, 'docs/secret.md': 'a\n' },
+      headFiles: { 'other/tickets.json': table, 'docs/secret.md': 'b\n' },
+    });
+    const g = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+    g('checkout', '-q', 'main');
+    symlinkSync('custom', join(dir, 'alias'), 'dir');
+    g('add', '-A'); g('commit', '-qm', 'base alias');
+    g('checkout', '-q', 'feat');
+    g('merge', '-q', '--no-edit', 'main');
+    rmSync(join(dir, 'alias'));
+    symlinkSync('other', join(dir, 'alias'), 'dir');
+    g('add', '-A'); g('commit', '-qm', 'retarget alias');
+    const r = viaDir(dir, 'alias');
+    assert.equal(r.status, 2, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).reasons, ['touches rails deny-path of ticket T1: docs/secret.md']);
+    assert.ok(!r.stderr.includes('skipped own new rail'), r.stderr);
+  });
+
   it('base rails are only the named ticket\'s: another base ticket with the same glob tiers, the own copy is skipped', () => {
     const dir = scratchRepo({
       baseTickets: [T({ id: 'T9', rails: ['test/own/**'] })],
