@@ -508,33 +508,63 @@ export function applyMutant(content, mutant) {
 }
 
 /**
+ * Classify one unified-diff hunk BODY line by its first character only.
+ * A source line that itself begins with `--` or `++` renders as `---…` /
+ * `+++…` and must still be a delete / add: only the per-file header pair
+ * (consumed outside a hunk) may look like that.
+ *
+ * @param {string} line
+ * @returns {'add'|'delete'|'marker'|'context'}
+ */
+export function classifyDiffBodyLine(line) {
+  switch (line[0]) {
+    case '+': return 'add';
+    case '-': return 'delete';
+    case '\\': return 'marker';
+    default: return 'context';
+  }
+}
+
+const HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+
+/**
  * Parse a unified diff into { file: Set(added/modified 1-based line numbers) }
  * for the *new* side. Used to diff-scope mutation.
+ *
+ * The `@@` header's new-side count says how many added/context lines the body
+ * still holds, so header-like lines (`--- a/…`, `+++ b/…`) are only recognised
+ * once it is exhausted. Trailing deletions after that point start with `-` and
+ * can never match a header, so the old-side count is not needed.
  */
 export function changedLinesFromDiff(diffText) {
   const result = {};
   let currentFile = null;
   let newLine = 0;
+  let newLeft = 0;
   for (const line of diffText.split('\n')) {
-    const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+    if (newLeft > 0) {
+      const kind = classifyDiffBodyLine(line);
+      if (kind === 'marker') continue;
+      if (kind === 'add') {
+        if (currentFile) result[currentFile].add(newLine);
+        newLine++;
+        newLeft--;
+      } else if (kind === 'context') {
+        newLine++;
+        newLeft--;
+      }
+      continue;
+    }
+    const fileMatch = line.match(/^\+\+\+ (?:b\/(.+)|\/dev\/null)$/);
     if (fileMatch) {
-      currentFile = fileMatch[1];
-      result[currentFile] = result[currentFile] ?? new Set();
+      currentFile = fileMatch[1] ?? null;
+      if (currentFile) result[currentFile] = result[currentFile] ?? new Set();
       continue;
     }
-    const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunkMatch) {
-      newLine = parseInt(hunkMatch[1], 10);
-      continue;
-    }
-    if (!currentFile) continue;
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      result[currentFile].add(newLine);
-      newLine++;
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      // deletion: new-side line number does not advance
-    } else if (!line.startsWith('\\')) {
-      newLine++;
+    const hunk = line.match(HUNK_RE);
+    if (hunk) {
+      newLine = parseInt(hunk[1], 10);
+      newLeft = hunk[2] === undefined ? 1 : parseInt(hunk[2], 10);
     }
   }
   return result;

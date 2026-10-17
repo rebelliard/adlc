@@ -149,7 +149,21 @@ function p4Fixture(t) {
   mkdirSync(dir, { recursive: true });
   const railPath = join(cwd, 'test/a.test.mjs');
   writeFileSync(railPath, 'test("rail", () => {});\n');
+  writeFileSync(join(cwd, P4_SRC), P4_SRC_CONTENT);
   return { cwd, dir, railPath };
+}
+
+// p4-build must hash the files it covers (#759); p4Fixture writes this one.
+const P4_SRC = 'src.mjs';
+const P4_SRC_CONTENT = 'export const x = 1;\n';
+function p4Build(ticket) {
+  return { gate: 'p4-build', ticket, files: { [P4_SRC]: sha256(P4_SRC_CONTENT) } };
+}
+
+// flail-check is tree-bound like p4-build (#759): same files, `type:` because
+// flail-detector.mjs sets that field explicitly.
+function flailCheck(ticket) {
+  return { type: 'flail-check', ticket, files: { [P4_SRC]: sha256(P4_SRC_CONTENT) } };
 }
 
 // p4-build fixtures use `gate:`, not `type:` — the real, documented producer
@@ -160,7 +174,7 @@ function p4Fixture(t) {
 // producers (rails-guard.mjs, flail-detector.mjs) set that field explicitly.
 function writeP4Evidence(dir, content) {
   writeManifest(dir, [
-    { gate: 'p4-build', ticket: 'T1' },
+    p4Build('T1'),
     {
       type: 'rails-check',
       ticket: 'T1',
@@ -168,13 +182,13 @@ function writeP4Evidence(dir, content) {
       suppressionsClean: true,
       railFiles: { 'test/a.test.mjs': sha256(content) },
     },
-    { type: 'flail-check', ticket: 'T1' },
+    flailCheck('T1'),
   ]);
 }
 
 function writeP4EvidenceForTicket(dir, ticket, content) {
   writeManifest(dir, [
-    { gate: 'p4-build', ticket },
+    p4Build(ticket),
     {
       type: 'rails-check',
       ticket,
@@ -182,7 +196,7 @@ function writeP4EvidenceForTicket(dir, ticket, content) {
       suppressionsClean: true,
       railFiles: { 'test/a.test.mjs': sha256(content) },
     },
-    { type: 'flail-check', ticket },
+    flailCheck(ticket),
   ]);
 }
 
@@ -197,7 +211,7 @@ describe('assertPhase', () => {
   it('reports exactly the missing marker when only one of the three p4 markers is absent', (t) => {
     const { cwd, dir, railPath } = p4Fixture(t);
     writeManifest(dir, [
-      { gate: 'p4-build', ticket: 'T1' },
+      p4Build('T1'),
       {
         type: 'rails-check',
         ticket: 'T1',
@@ -223,7 +237,7 @@ describe('assertPhase', () => {
         suppressionsClean: true,
         railFiles: { 'test/a.test.mjs': sha256(readFileSync(railPath)) },
       },
-      { type: 'flail-check', ticket: 'T1' },
+      flailCheck('T1'),
     ]);
     const result = assertPhase('p4', { dir, ticket: 'T1', cwd });
     assert.equal(result.ok, false);
@@ -233,9 +247,9 @@ describe('assertPhase', () => {
   it('reports exactly rails-check missing when only it is absent', (t) => {
     const { cwd, dir } = p4Fixture(t);
     writeManifest(dir, [
-      { gate: 'p4-build', ticket: 'T1' },
+      p4Build('T1'),
       // rails-check deliberately omitted
-      { type: 'flail-check', ticket: 'T1' },
+      flailCheck('T1'),
     ]);
     const result = assertPhase('p4', { dir, ticket: 'T1', cwd });
     assert.equal(result.ok, false);
@@ -264,9 +278,9 @@ describe('assertPhase', () => {
   it('rejects p4 when rails-check lacks rail file hashes', (t) => {
     const { cwd, dir } = p4Fixture(t);
     writeManifest(dir, [
-      { gate: 'p4-build', ticket: 'T1' },
+      p4Build('T1'),
       { type: 'rails-check', ticket: 'T1', railsDiffEmpty: true, suppressionsClean: true },
-      { type: 'flail-check', ticket: 'T1' },
+      flailCheck('T1'),
     ]);
     const result = assertPhase('p4', { dir, ticket: 'T1', cwd });
     assert.equal(result.ok, false);
@@ -1150,13 +1164,13 @@ describe('adlc cli', () => {
     writeFileSync(logFile, 'Build started\nDone in 2.3s\nAll tests passed.\n');
     const flailBin = join(repoRoot, 'packages/flail-detector/bin/flail-detector.mjs');
     const flailResult = spawnSync(process.execPath, [
-      flailBin, logFile, '--record', '--ticket', 'T1',
+      flailBin, logFile, '--record', '--ticket', 'T1', '--files', 'src.mjs',
     ], { cwd, encoding: 'utf8' });
     assert.equal(flailResult.status, 0, `flail-detector --record failed: ${flailResult.stderr}`);
 
     const gateManifestBin = join(repoRoot, 'packages/gate-manifest/bin/gate-manifest.mjs');
     const p4BuildResult = spawnSync(process.execPath, [
-      gateManifestBin, 'record', 'p4-build', '--ticket', 'T1',
+      gateManifestBin, 'record', 'p4-build', '--ticket', 'T1', '--files', 'src.mjs',
     ], { cwd, encoding: 'utf8' });
     assert.equal(p4BuildResult.status, 0, `gate-manifest record p4-build failed: ${p4BuildResult.stderr}`);
 
