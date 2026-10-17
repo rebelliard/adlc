@@ -217,6 +217,23 @@ export async function consultBuildGate(payload, {
 }
 
 /**
+ * The buildgate was opted into but no workspace root resolved, so there is no
+ * repo to consult and the edit's fitness cannot be checked. A structured
+ * mutating or unrecognized tool is denied (the direction the gate takes on an
+ * internal error). A Task/subagent spawn has no file target, so it keeps the
+ * rails verdict and goes on to the P5 policy; read-only and shell tools are
+ * never gated.
+ */
+function unresolvedBuildGate(payload, toolName, rails) {
+  const cls = classifyTool(toolName);
+  const mutating = cls === 'mutating' || (cls === 'other' && !isShellTool(toolName));
+  if (!mutating || isP5TaskPayload(payload, toolName)) return rails;
+  return buildGateDeny(
+    'the workspace root could not be resolved from the hook payload or CURSOR_PROJECT_DIR — failing closed.',
+  );
+}
+
+/**
  * The dispatcher decision: rails first (verbatim), then — only on rails-allow
  * AND ADLC_BUILD_GATE_ENFORCEMENT=1 — the lazy buildgate consult.
  */
@@ -241,9 +258,21 @@ export async function dispatch(payload, { root, env = process.env, now, importMo
 
   if (env.ADLC_BUILD_GATE_ENFORCEMENT !== '1') return rails; // buildgate is default-OFF
 
-  const owningRoot = root ?? resolveOwning(payload, extractFilePaths(payload)[0]).root;
+  if (root == null && hasUnresolvedTarget(payload, env)) return unresolvedBuildGate(payload, toolName, rails);
+  const owningRoot = root ?? resolveOwning(payload, extractFilePaths(payload)[0], undefined, env).root;
   const gate = await consultBuildGate(payload, { root: owningRoot, env, now, importModule });
   return gate ?? rails;
+}
+
+/**
+ * True when ANY target of the payload (or a path-less payload) has no
+ * resolvable workspace root, so no target can hide an unresolved one by
+ * ordering.
+ */
+function hasUnresolvedTarget(payload, env) {
+  const paths = extractFilePaths(payload);
+  const targets = paths.length ? paths : [undefined];
+  return targets.some((p) => resolveOwning(payload, p, undefined, env).root == null);
 }
 
 async function readStdin() {
