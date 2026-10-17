@@ -100,7 +100,7 @@ export const routerModel = {
       },
       includes: ["minimal:adversarial-loop"],
       local: {
-        "body": "\nADLC_CODEX_SENTINEL_PHASE_ROUTER_V1\n\n# ADLC Router\n\nClassify the work before acting:\n\n- Trivial: direct edit, existing rails, one prosecution pass.\n- Bounded: write or identify rails, build, prosecute-lite.\n- Substantial: P1-P7 full lifecycle.\n- Architectural: P1 design alternatives, then full lifecycle.\n\nUse deterministic ADLC CLIs for pass/fail. Skills may recommend commands; they do not\ndeclare gates complete unless the relevant CLI and `.adlc/manifest.jsonl` evidence pass.\n\nStart with:\n\n```sh\nadlc preflight --json\n```\n\nFor strict phase assertions, use:\n\n```sh\nadlc run <p0|p1|p2|p3|p4|p5|p6|p7> --dir .adlc --json\n```\n\nP0, P1, P3, P4, P5, and P6 assertions are ticket-scoped; include `--ticket <ticket-id>` for\nthose phases.\n\n",
+        "body": "\nADLC_CODEX_SENTINEL_PHASE_ROUTER_V1\n\n# ADLC Router\n\nClassify the work before acting:\n\n- Trivial: direct edit, existing rails, one prosecution pass.\n- Bounded: write or identify rails, build, prosecute-lite.\n- Substantial: P1-P7 full lifecycle.\n- Architectural: P1 design alternatives, then full lifecycle.\n\nUse deterministic ADLC CLIs for pass/fail. Skills may recommend commands; they do not\ndeclare gates complete unless the relevant CLI and `.adlc/manifest.jsonl` evidence pass.\n\nStart with:\n\n```sh\nadlc preflight --json\n```\n\nFor strict phase assertions, use:\n\n```sh\nadlc run <p0|p1|p2|p3|p4|p5|p6|p7> --dir .adlc --json\n```\n\nP0, P1, P2, P3, P4, P5, and P6 assertions are ticket-scoped; include `--ticket <ticket-id>` for\nthose phases.\n\n",
         // Codex-specific (T50): the native Stop hook this plugin ships. NOT shared
         // with pi's "minimal" layout below -- pi has no equivalent hook, so this is
         // a codex-only local section, not a `shared` block.
@@ -118,7 +118,7 @@ export const routerModel = {
       },
       includes: ["minimal:adversarial-loop"],
       local: {
-        "body": "\n# ADLC Router (Pi Integration)\n\nClassify the work before acting:\n\n- Trivial: direct edit, existing rails, one prosecution pass.\n- Bounded: write or identify rails, build, prosecute-lite.\n- Substantial: P1-P7 full lifecycle.\n- Architectural: P1 design alternatives, then full lifecycle.\n\nUse deterministic ADLC CLIs for pass/fail. Skills may recommend commands; they do not declare gates complete unless the relevant CLI and `.adlc/manifest.jsonl` evidence pass.\n\nStart with:\n\n```sh\nadlc preflight --json\n```\n\nFor strict phase assertions, use:\n\n```sh\nadlc run <p0|p1|p2|p3|p4|p5|p6|p7> --dir .adlc --json\n```\n\nP0, P1, P3, P4, P5, and P6 assertions are ticket-scoped; include `--ticket <ticket-id>` for those phases.\n\n",
+        "body": "\n# ADLC Router (Pi Integration)\n\nClassify the work before acting:\n\n- Trivial: direct edit, existing rails, one prosecution pass.\n- Bounded: write or identify rails, build, prosecute-lite.\n- Substantial: P1-P7 full lifecycle.\n- Architectural: P1 design alternatives, then full lifecycle.\n\nUse deterministic ADLC CLIs for pass/fail. Skills may recommend commands; they do not declare gates complete unless the relevant CLI and `.adlc/manifest.jsonl` evidence pass.\n\nStart with:\n\n```sh\nadlc preflight --json\n```\n\nFor strict phase assertions, use:\n\n```sh\nadlc run <p0|p1|p2|p3|p4|p5|p6|p7> --dir .adlc --json\n```\n\nP0, P1, P2, P3, P4, P5, and P6 assertions are ticket-scoped; include `--ticket <ticket-id>` for those phases.\n\n",
       },
       layout: ["body","minimal:adversarial-loop"],
     },
@@ -134,7 +134,7 @@ export const routerModel = {
       local: {
         "intro": "\n# ADLC phase router (OpenCode)\n\nDescribe what you're doing; this routes you to the gate that fits. Gates run via\nthe `adlc <tool>` dispatcher (`npm i -g @adlc/cli`). LLM-backed gates support\n`--prompt-only` — inside OpenCode, the model answers the printed prompt, so no\nAPI key is required.\n",
         "p0-row": "| Triage / author a ticket | P0 | `adlc preflight`, `/adlc-ticket` |\n",
-        "rail-enforcement": "## Rail enforcement in this harness\n\nThe bundled plugin wires a `tool.execute.before` hook that denies structured\n`edit`/`write` to frozen rails declared by the active ticket. It is **advisory in\nsession and gated on host SDK capability** — the unbypassable layer is the\ncommit-time CI gate (`docs/ci/rails-guard.yml`). See\n[`docs/integrations/opencode.md`](../../../docs/integrations/opencode.md).\n",
+        "rail-enforcement": "## Rail enforcement in this harness\n\nThe bundled plugin wires a tool `execute.before` hook that denies structured\n`edit`/`write` to frozen rails declared by the active ticket. It **enforces by\ndefault** (a thrown error aborts the tool call); `ADLC_ALLOW_ADVISORY_HOOKS=1` or the\n`advisoryHooks` plugin option downgrades it to a warning. The unbypassable layer is\nstill the commit-time CI gate (`docs/ci/rails-guard.yml`). See\n[`docs/integrations/opencode.md`](../../../docs/integrations/opencode.md).\n",
       },
       layout: ["intro","table:head","p0-row","table:rows-rest","table:adversarial","rail-enforcement"],
     },

@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleFileEdited, createWatcherState, allowedSuppressions, MAX_RESTORES_PER_FILE, SUPPRESSION_MARKERS } from '../lib/watcher.mjs';
-import { adlcRailsGuard } from '../index.mjs';
+import { loadPlugin, captureStderr, filesystemChanged } from './helpers/fake-ctx.mjs';
 
 // Every fixture the factories below mint; removed once this file's tests finish.
 const fixtureDirs = new Set();
@@ -224,48 +224,143 @@ test('in-scope and .adlc/ writes are not flagged; tickets without scope are exem
 });
 
 // ---- end-to-end through the REAL event handler: synthetic third-party tool ----
-test('handler: a write from an UNKNOWN tool (no before-hook interception) is restored via file.edited', async () => {
+test('handler: a write from an UNKNOWN tool (no before-hook interception) is restored via filesystem.changed', async () => {
   const dir = gitRepo({ tickets: T1 });
   const saved = { ...process.env };
   try {
     process.env.ADLC_P4_ENFORCEMENT = '1';
     process.env.ADLC_TICKET = 'T1';
-    const toasts = [];
-    const client = { tui: { showToast: async (req) => { toasts.push(req.body); } } };
-    const hooks = await adlcRailsGuard({ worktree: dir, client });
+    const plugin = await loadPlugin({ root: dir });
     // Simulate a co-installed plugin's write tool the before-hook never saw:
-    // the write simply LANDS, then OpenCode emits file.edited.
+    // the write simply LANDS, then OpenCode emits filesystem.changed.
     writeFileSync(join(dir, 'test', 'x.mjs'), 'SPOOFED WRITE\n');
-    await hooks.event({ event: { type: 'file.edited', properties: { file: join(dir, 'test', 'x.mjs') } } });
+    const { lines } = await captureStderr(() => plugin.emit(filesystemChanged(join(dir, 'test', 'x.mjs'), { directory: dir })));
+    plugin.cleanup();
     assert.equal(readFileSync(join(dir, 'test', 'x.mjs'), 'utf8'), RAIL_CONTENT, 'rail restored');
-    assert.equal(toasts.length, 1);
-    assert.match(toasts[0].message, /rails-backstop/);
-    assert.equal(toasts[0].variant, 'error');
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^\[adlc\] error: .*rails-backstop/);
   } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
 });
 
-// ---- dormant permission.ask lever (2.1) ----
-test('permission.ask (dormant): rail-target permission → status deny, both payload shapes', async () => {
+test('handler: DELETING a frozen tracked rail (unlink event) is restored from HEAD', async () => {
   const dir = gitRepo({ tickets: T1 });
   const saved = { ...process.env };
   try {
     process.env.ADLC_P4_ENFORCEMENT = '1';
     process.env.ADLC_TICKET = 'T1';
-    const hooks = await adlcRailsGuard({ worktree: dir });
-    // V1 shape: { type, pattern }
-    const v1 = { status: 'ask' };
-    await hooks['permission.ask']({ type: 'edit', pattern: 'test/x.mjs' }, v1);
-    assert.equal(v1.status, 'deny');
-    // V2 shape: { action, resources[] }
-    const v2 = { status: 'ask' };
-    await hooks['permission.ask']({ action: 'write', resources: ['test/x.mjs'] }, v2);
-    assert.equal(v2.status, 'deny');
+    const plugin = await loadPlugin({ root: dir });
+    rmSync(join(dir, 'test', 'x.mjs'));
+    const { lines } = await captureStderr(() => plugin.emit(filesystemChanged(join(dir, 'test', 'x.mjs'), { event: 'unlink', directory: dir })));
+    plugin.cleanup();
+    assert.equal(readFileSync(join(dir, 'test', 'x.mjs'), 'utf8'), RAIL_CONTENT, 'deleted rail restored');
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^\[adlc\] error: .*rails-backstop/);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('handler: a deleted rail that CANNOT be restored is surfaced as a warning; out-of-scope deletions stay silent', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    const plugin = await loadPlugin({ root: dir });
+    const { lines } = await captureStderr(async () => {
+      // not in HEAD, so `git checkout HEAD --` cannot bring it back
+      await plugin.emit(filesystemChanged(join(dir, 'test', 'never-tracked.mjs'), { event: 'unlink', directory: dir }));
+      // a plain out-of-scope file that is simply gone is not a rail problem
+      await plugin.emit(filesystemChanged(join(dir, 'src', 'gone.mjs'), { event: 'unlink', directory: dir }));
+    });
+    plugin.cleanup();
+    assert.equal(lines.length, 1, lines.join('\n'));
+    assert.match(lines[0], /^\[adlc\] warning: .*could NOT restore test\/never-tracked\.mjs/);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('handler: a filesystem event with no location and a RELATIVE path is not guessed onto this project', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    const plugin = await loadPlugin({ root: dir });
+    writeFileSync(join(dir, 'test', 'x.mjs'), 'SOMEONE ELSES WRITE\n');
+    const { lines } = await captureStderr(() => plugin.emit(filesystemChanged('test/x.mjs', {})));
+    plugin.cleanup();
+    assert.equal(readFileSync(join(dir, 'test', 'x.mjs'), 'utf8'), 'SOMEONE ELSES WRITE\n', 'not restored: the event cannot be tied to this project');
+    assert.deepEqual(lines, []);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('handler: a RELATIVE path from a nested location is resolved against that location, not the project root', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    // 'x.mjs' relative to <dir>/test is the frozen rail <dir>/test/x.mjs.
+    const plugin = await loadPlugin({ root: dir });
+    writeFileSync(join(dir, 'test', 'x.mjs'), 'SPOOFED WRITE\n');
+    const { lines } = await captureStderr(() => plugin.emit(filesystemChanged('x.mjs', { directory: join(dir, 'test') })));
+    assert.equal(readFileSync(join(dir, 'test', 'x.mjs'), 'utf8'), RAIL_CONTENT, 'restored via the nested location');
+    assert.equal(lines.length, 1);
+    // And a relative path that merely LOOKS like a rail under the root is not
+    // mistaken for one: <dir>/src + 'x.mjs' is <dir>/src/x.mjs, not <dir>/x.mjs.
+    writeFileSync(join(dir, 'src', 'x.mjs'), 'const fine = 1;\n');
+    const quiet = await captureStderr(() => plugin.emit(filesystemChanged('x.mjs', { directory: join(dir, 'src') })));
+    plugin.cleanup();
+    assert.deepEqual(quiet.lines, []);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- root resolution: v2 `location` has no `worktree`; the project root is `project.directory` ----
+test('nested launch: rails resolve against the project root, not the launch directory', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    const launchDir = join(dir, 'src');
+    const plugin = await loadPlugin({ root: dir, launchDir });
+    await assert.rejects(() => plugin.before('write', { filePath: join(dir, 'test', 'x.mjs') }), /rails-guard/, 'a frozen rail is still denied');
+    // The host tags events with the directory OpenCode was launched in.
+    writeFileSync(join(dir, 'test', 'x.mjs'), 'SPOOFED WRITE\n');
+    const { lines } = await captureStderr(() => plugin.emit(filesystemChanged(join(dir, 'test', 'x.mjs'), { directory: launchDir })));
+    plugin.cleanup();
+    assert.equal(readFileSync(join(dir, 'test', 'x.mjs'), 'utf8'), RAIL_CONTENT, 'the watcher backstop works from the nested launch too');
+    assert.equal(lines.length, 1);
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a project directory that does not contain the launch directory is ignored (global project)', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    for (const projectDir of ['/', '/somewhere/else']) {
+      const plugin = await loadPlugin({ root: dir, projectDir });
+      await assert.rejects(() => plugin.before('write', { filePath: join(dir, 'test', 'x.mjs') }), /rails-guard/, `projectDir=${projectDir}`);
+      plugin.cleanup();
+    }
+  } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- permission.evaluate lever (2.1) ----
+test('permission.evaluate: rail-target permission → effect deny with a message', async () => {
+  const dir = gitRepo({ tickets: T1 });
+  const saved = { ...process.env };
+  try {
+    process.env.ADLC_P4_ENFORCEMENT = '1';
+    process.env.ADLC_TICKET = 'T1';
+    const plugin = await loadPlugin({ root: dir });
+    const { result: hit } = await captureStderr(() => plugin.permission({ action: 'edit', resources: ['test/x.mjs'] }));
+    assert.equal(hit.effect, 'deny');
+    assert.match(hit.message, /ADLC rails-guard: denied permission "edit" — frozen rail/);
     // Non-rail target and read-type permissions untouched
-    const ok = { status: 'ask' };
-    await hooks['permission.ask']({ type: 'edit', pattern: 'src/ok.mjs' }, ok);
-    assert.equal(ok.status, 'ask');
-    const read = { status: 'ask' };
-    await hooks['permission.ask']({ type: 'read', pattern: 'test/x.mjs' }, read);
-    assert.equal(read.status, 'ask');
+    const ok = await plugin.permission({ action: 'edit', resources: ['src/ok.mjs'] });
+    assert.equal(ok.effect, 'ask');
+    const read = await plugin.permission({ action: 'read', resources: ['test/x.mjs'] });
+    assert.equal(read.effect, 'ask');
   } finally { Object.assign(process.env, saved); rmSync(dir, { recursive: true, force: true }); }
 });

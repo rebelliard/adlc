@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractPrompts, runGateKeyless, makeAsk } from '../lib/keyless-bridge.mjs';
+import { extractPrompts, runGateKeyless, makeAsk, withTimeout } from '../lib/keyless-bridge.mjs';
 
 // ---- extractPrompts ----
 test('extractPrompts: single-prompt gate → one segment', () => {
@@ -71,80 +71,242 @@ test('runGateKeyless: requires an ask function', async () => {
   await assert.rejects(() => runGateKeyless({ bin: 'adlc', spawnImpl: stubSpawn('p') }), /ask\(prompt\) function is required/);
 });
 
-// ---- makeAsk against the real source-verified SDK (v1.17.13) ----
-import { answerFromPrompt } from '../lib/keyless-bridge.mjs';
+// ---- makeAsk against the v2 generate API (`ctx.generate.text`) ----
+import { answerFromMessages, makeSessionAsk } from '../lib/keyless-bridge.mjs';
 
-/** A mock OpencodeClient capturing the create/prompt/delete calls. */
-function mockClient({ reply = 'VERDICT: clear', childId = 'ses_child' } = {}) {
-  const calls = { create: [], prompt: [], delete: [] };
+/** A mock `ctx.generate` capturing `text` calls. */
+function mockGenerate({ reply = 'VERDICT: clear' } = {}) {
+  const calls = [];
+  return { calls, text: async (req) => { calls.push(req); return { text: reply }; } };
+}
+
+test('makeAsk: one stateless generate.text call per prompt, returns its text', async () => {
+  const generate = mockGenerate({ reply: '  VERDICT: SHIP\n' });
+  const ask = makeAsk(generate, { model: { providerID: 'mock', modelID: 'm' } });
+  assert.equal(typeof ask, 'function');
+  assert.equal(await ask('audit this spec'), 'VERDICT: SHIP');
+  // v1 { providerID, modelID } refs are translated to the v2 { providerID, id } shape
+  assert.deepEqual(generate.calls, [{ prompt: 'audit this spec', model: { providerID: 'mock', id: 'm' } }]);
+});
+
+test('makeAsk: omits model when not given (host default)', async () => {
+  const generate = mockGenerate();
+  await makeAsk(generate)('q');
+  assert.deepEqual(generate.calls, [{ prompt: 'q' }]);
+});
+
+/** A `generate` whose text() never answers on its own and rejects when its request signal aborts. */
+function hangingGenerate() {
+  const seen = [];
   return {
-    calls,
-    session: {
-      create: async (req) => { calls.create.push(req); return { data: { id: childId } }; },
-      prompt: async (req) => {
-        calls.prompt.push(req);
-        return { data: { info: { role: 'assistant' }, parts: [{ type: 'text', text: reply }] } };
-      },
-      delete: async (req) => { calls.delete.push(req); return { data: true }; },
-    },
+    seen,
+    text: (_req, opts) => new Promise((_, reject) => {
+      seen.push(opts?.signal);
+      opts?.signal?.addEventListener('abort', () => reject(new Error('aborted by host')), { once: true });
+    }),
   };
 }
 
-test('answerFromPrompt: concatenates text parts, ignores non-text', () => {
-  assert.equal(answerFromPrompt({ data: { parts: [{ type: 'text', text: 'a' }, { type: 'file' }, { type: 'text', text: 'b' }] } }), 'ab');
-  assert.equal(answerFromPrompt({ data: { parts: [] } }), '');
-  assert.equal(answerFromPrompt(null), '');
+test('makeAsk: a timeout aborts the in-flight generate.text request, not just the wait', async () => {
+  const generate = hangingGenerate();
+  await assert.rejects(() => makeAsk(generate, { timeoutMs: 20 })('q'), /generate\.text timed out/);
+  assert.equal(generate.seen.length, 1);
+  assert.equal(generate.seen[0].aborted, true, 'the request signal was aborted so the host stops the generation');
 });
 
-test('makeAsk: spins up a child session, prompts it, returns reply text, cleans up', async () => {
-  const client = mockClient({ reply: 'VERDICT: SHIP', childId: 'ses_c1' });
-  const ask = makeAsk(client, { parentID: 'ses_parent', model: { providerID: 'mock', modelID: 'm' } });
-  assert.equal(typeof ask, 'function');
-  const answer = await ask('audit this spec');
-  assert.equal(answer, 'VERDICT: SHIP');
-  // child parented to the active session
-  assert.equal(client.calls.create[0].body.parentID, 'ses_parent');
-  // prompted the child with the gate text, ALL tools denied (wildcard rule —
-  // an empty map would inherit the base agent default = all enabled), chosen model
-  assert.equal(client.calls.prompt[0].path.id, 'ses_c1');
-  assert.deepEqual(client.calls.prompt[0].body.tools, { '*': false });
-  assert.deepEqual(client.calls.prompt[0].body.model, { providerID: 'mock', modelID: 'm' });
-  assert.equal(client.calls.prompt[0].body.parts[0].text, 'audit this spec');
-  // child cleaned up
-  assert.equal(client.calls.delete[0].path.id, 'ses_c1');
+test('makeAsk: cancelling the parent tool call aborts the in-flight request', async () => {
+  const generate = hangingGenerate();
+  const parent = new AbortController();
+  const pending = makeAsk(generate, { timeoutMs: 60_000, signal: parent.signal })('q');
+  await new Promise((r) => setImmediate(r));
+  parent.abort();
+  await assert.rejects(() => pending, /aborted by host/);
+  assert.equal(generate.seen[0].aborted, true);
 });
 
-test('makeAsk: omits model when not given (inherit session default)', async () => {
-  const client = mockClient();
-  await makeAsk(client, { parentID: 'p' })('q');
-  assert.equal('model' in client.calls.prompt[0].body, false);
+test('makeAsk: an already-cancelled parent never starts a generation', async () => {
+  const generate = hangingGenerate();
+  const parent = new AbortController();
+  parent.abort();
+  await assert.rejects(() => makeAsk(generate, { timeoutMs: 60_000, signal: parent.signal })('q'), /cancelled/);
+  assert.equal(generate.seen.length, 0, 'no request was sent to the host');
 });
 
-test('makeAsk: teardown failure never fails the gate answer', async () => {
-  const client = mockClient({ reply: 'ok' });
-  client.session.delete = async () => { throw new Error('delete blew up'); };
-  assert.equal(await makeAsk(client, {})('q'), 'ok');
+test('makeAsk: cancelling the parent rejects at once even when the host drops the request signal', async () => {
+  const generate = { text: () => new Promise(() => {}) };
+  const parent = new AbortController();
+  const pending = makeAsk(generate, { timeoutMs: 60_000, signal: parent.signal })('q');
+  await new Promise((r) => setImmediate(r));
+  parent.abort();
+  await assert.rejects(() => pending, /keyless: tool call was cancelled/);
 });
 
-test('makeAsk: no session API → null (caller fails closed)', () => {
-  assert.equal(makeAsk({}, {}), null);
+test('makeAsk: a successful answer leaves the request signal un-aborted', async () => {
+  const seen = [];
+  const generate = { text: async (_req, opts) => { seen.push(opts?.signal); return { text: 'ok' }; } };
+  assert.equal(await makeAsk(generate)('q'), 'ok');
+  assert.equal(seen[0].aborted, false);
+});
+
+test('makeAsk: a reply without text is an empty answer, not a crash', async () => {
+  assert.equal(await makeAsk({ text: async () => ({}) })('q'), '');
+});
+
+test('makeAsk: no generate API → null (caller fails closed)', () => {
+  assert.equal(makeAsk({}), null);
   assert.equal(makeAsk(null), null);
-  assert.equal(makeAsk({ session: { create: () => {} } }), null); // create but no prompt
+  assert.equal(makeAsk(undefined), null);
 });
 
 // ---- P5 finding: timeout + prompt cap (no hung turn / unbounded fan-out) ----
-test('makeAsk: a hung child prompt times out and still deletes the child', async () => {
-  const deletes = [];
-  const client = {
-    session: {
-      create: async () => ({ data: { id: 'ses_hang' } }),
-      prompt: () => new Promise(() => {}), // never resolves
-      delete: async (req) => { deletes.push(req.path.id); },
-    },
+test('makeAsk: a hung generation times out', async () => {
+  const ask = makeAsk({ text: () => new Promise(() => {}) }, { timeoutMs: 20 });
+  await assert.rejects(() => ask('q'), /keyless: generate\.text timed out/);
+});
+
+// ---- makeSessionAsk: child sessions for tool-using work (prosecution lenses) ----
+const assistant = (...texts) => ({ id: 'msg_a', type: 'assistant', content: texts.map((text) => ({ type: 'text', text })) });
+
+/** A mock v2 `ctx.session` capturing create/prompt/wait/context calls. */
+function mockSession({ messages = [assistant('VERDICT: clear')], sessionID = 'ses_child' } = {}) {
+  const calls = { create: [], prompt: [], wait: [], context: [] };
+  return {
+    calls,
+    create: async (req) => { calls.create.push(req); return { id: sessionID }; },
+    prompt: async (req) => { calls.prompt.push(req); return { id: 'inb_1' }; },
+    wait: async (req) => { calls.wait.push(req); },
+    context: async (req) => { calls.context.push(req); return messages; },
   };
-  const ask = makeAsk(client, { timeoutMs: 20 });
-  await assert.rejects(() => ask('q'), /timed out/);
-  assert.deepEqual(deletes, ['ses_hang'], 'child cleaned up despite the hang');
+}
+
+const PERMS = [{ action: '*', resource: '*', effect: 'deny' }];
+
+test('answerFromMessages: last assistant message, text content only', () => {
+  const msgs = [
+    assistant('old'),
+    { type: 'user', content: [{ type: 'text', text: 'q' }] },
+    { type: 'assistant', content: [{ type: 'reasoning', text: 'hmm' }, { type: 'text', text: 'a' }, { type: 'tool' }, { type: 'text', text: 'b' }] },
+  ];
+  assert.equal(answerFromMessages(msgs), 'ab');
+  assert.equal(answerFromMessages([]), '');
+  assert.equal(answerFromMessages(null), '');
+  assert.equal(answerFromMessages({ data: msgs }), '', 'only the array shape session.context resolves to');
+});
+
+test('makeSessionAsk: creates a permissioned child, prompts, waits, reads context', async () => {
+  const session = mockSession({ messages: [assistant('VERDICT: SHIP')], sessionID: 'ses_c1' });
+  const ask = makeSessionAsk(session, { title: 't', permissions: PERMS, directory: '/repo', model: { providerID: 'p', id: 'm' } });
+  assert.equal(await ask('audit this'), 'VERDICT: SHIP');
+  assert.deepEqual(session.calls.create, [{ title: 't', permissions: PERMS, location: { directory: '/repo' }, model: { providerID: 'p', id: 'm' } }]);
+  assert.deepEqual(session.calls.prompt, [{ sessionID: 'ses_c1', text: 'audit this' }]);
+  assert.deepEqual(session.calls.wait, [{ sessionID: 'ses_c1' }]);
+  assert.deepEqual(session.calls.context, [{ sessionID: 'ses_c1' }]);
+});
+
+test('makeSessionAsk: the reply is read only after the child went idle', async () => {
+  const order = [];
+  const session = mockSession();
+  const { wait, context } = session;
+  session.wait = async (r) => { order.push('wait'); return wait(r); };
+  session.context = async (r) => { order.push('context'); return context(r); };
+  await makeSessionAsk(session, { title: 't', permissions: PERMS })('q');
+  assert.deepEqual(order, ['wait', 'context']);
+});
+
+test('makeSessionAsk: missing any required session method → null (caller fails closed)', () => {
+  for (const missing of ['create', 'prompt', 'wait', 'context']) {
+    const session = mockSession();
+    delete session[missing];
+    assert.equal(makeSessionAsk(session, { title: 't', permissions: PERMS }), null, `no ${missing}`);
+  }
+  assert.equal(makeSessionAsk(null, { title: 't', permissions: PERMS }), null);
+});
+
+test('makeSessionAsk: no permissions array → null (never an unrestricted child; caller fails closed)', () => {
+  const session = mockSession();
+  for (const permissions of [undefined, null, 'allow-all', {}]) {
+    assert.equal(makeSessionAsk(session, { title: 't', permissions }), null, `permissions=${JSON.stringify(permissions)}`);
+  }
+  assert.equal(makeSessionAsk(session, { title: 't' }), null);
+  assert.equal(session.calls.create.length, 0, 'no child session was created');
+});
+
+test('makeSessionAsk: a reply timeout interrupts the child so it stops running in the background', async () => {
+  const session = mockSession();
+  const interrupted = [];
+  session.interrupt = async (req) => { interrupted.push(req); };
+  session.wait = () => new Promise(() => {});
+  await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, timeoutMs: 20, label: 'lens' })('q'), /lens: child session reply timed out/);
+  assert.deepEqual(interrupted, [{ sessionID: 'ses_child' }]);
+});
+
+test('makeSessionAsk: a failing or missing interrupt never masks the timeout error', async () => {
+  for (const interrupt of [async () => { throw new Error('gone'); }, undefined]) {
+    const session = mockSession();
+    if (interrupt) session.interrupt = interrupt;
+    session.wait = () => new Promise(() => {});
+    await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, timeoutMs: 20, label: 'lens' })('q'), /lens: child session reply timed out/);
+  }
+});
+
+test('makeSessionAsk: a successful reply is not interrupted', async () => {
+  const session = mockSession();
+  const interrupted = [];
+  session.interrupt = async (req) => { interrupted.push(req); };
+  await makeSessionAsk(session, { title: 't', permissions: PERMS })('q');
+  assert.deepEqual(interrupted, []);
+});
+
+test('makeSessionAsk: cancelling the parent interrupts the in-flight child and rejects', async () => {
+  const session = mockSession();
+  const interrupted = [];
+  session.interrupt = async (req) => { interrupted.push(req); };
+  session.wait = () => new Promise(() => {});
+  const parent = new AbortController();
+  const pending = makeSessionAsk(session, { title: 't', permissions: PERMS, timeoutMs: 60_000, label: 'lens', signal: parent.signal })('q');
+  await new Promise((r) => setImmediate(r));
+  parent.abort();
+  await assert.rejects(() => pending, /lens: cancelled/);
+  assert.deepEqual(interrupted, [{ sessionID: 'ses_child' }]);
+});
+
+test('makeSessionAsk: a cancel that lands while the child is being created interrupts it and never prompts it', async () => {
+  const session = mockSession();
+  const parent = new AbortController();
+  const interrupted = [];
+  session.interrupt = async (req) => { interrupted.push(req); };
+  const create = session.create;
+  session.create = async (req) => { const made = await create(req); parent.abort(); return made; };
+  await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, label: 'lens', signal: parent.signal })('q'), /lens: cancelled/);
+  assert.equal(session.calls.prompt.length, 0);
+  assert.deepEqual(interrupted, [{ sessionID: 'ses_child' }]);
+});
+
+test('withTimeout: an already-aborted signal rejects with the cancelled message', async () => {
+  const ctl = new AbortController();
+  ctl.abort();
+  await assert.rejects(() => withTimeout(new Promise(() => {}), 60_000, 'timed out', { signal: ctl.signal, cancelledMessage: 'was cancelled' }), /was cancelled/);
+});
+
+test('makeSessionAsk: an already-cancelled parent creates no child at all', async () => {
+  const session = mockSession();
+  const parent = new AbortController();
+  parent.abort();
+  await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, label: 'lens', signal: parent.signal })('q'), /lens: cancelled/);
+  assert.equal(session.calls.create.length, 0);
+});
+
+test('makeSessionAsk: create without a session id rejects (never prompts an unknown session)', async () => {
+  const session = mockSession();
+  session.create = async () => ({});
+  await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, label: 'lens' })('q'), /lens: child session\.create returned no session id/);
+  assert.equal(session.calls.prompt.length, 0);
+});
+
+test('makeSessionAsk: a child that never goes idle times out', async () => {
+  const session = mockSession();
+  session.wait = () => new Promise(() => {});
+  await assert.rejects(() => makeSessionAsk(session, { title: 't', permissions: PERMS, timeoutMs: 20, label: 'lens' })('q'), /lens: child session reply timed out/);
 });
 
 test('runGateKeyless: a gate emitting too many prompts is refused (no unbounded fan-out)', async () => {
@@ -157,8 +319,7 @@ test('runGateKeyless: a gate emitting too many prompts is refused (no unbounded 
 });
 
 test('runGateKeyless threads through the real makeAsk shape', async () => {
-  const client = mockClient({ reply: 'answer-A' });
-  const ask = makeAsk(client, { parentID: 'p' });
+  const ask = makeAsk(mockGenerate({ reply: 'answer-A' }));
   const spawnImpl = stubSpawn('single prompt block');
   const { answers } = await runGateKeyless({ bin: 'adlc', args: ['spec-lint'], ask, spawnImpl });
   assert.deepEqual(answers, ['answer-A']);

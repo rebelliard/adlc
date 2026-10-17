@@ -28,7 +28,7 @@ function matchesTicket(entry, ticket) {
 }
 
 export function requiresTicket(phase) {
-  return phase === 'p0' || phase === 'p1' || phase === 'p3' || phase === 'p4' || phase === 'p5' || phase === 'p6';
+  return phase === 'p0' || phase === 'p1' || phase === 'p2' || phase === 'p3' || phase === 'p4' || phase === 'p5' || phase === 'p6';
 }
 
 function requiresRevision(phase) {
@@ -362,29 +362,30 @@ function coldstartEvidenceShape(data) {
   return null;
 }
 
-function coldstartIntegrityErrors(entries, ticket, cwd, dir) {
+function coldstartIntegrityErrors(entries, ticket, cwd, dir, phase) {
+  const label = phase.toUpperCase();
   const entry = entries
     .filter((candidate) => entryType(candidate) === 'coldstart' && candidate.ticket === ticket)
     .at(-1);
   if (!entry) return [];
   const shape = coldstartEvidenceShape(entry.data);
   if (shape === null) {
-    return ['P0 evidence is incomplete: coldstart record has neither a live cache result (data.cache) nor a prompt-only verdict (data.verdict)'];
+    return [`${label} evidence is incomplete: coldstart record has neither a live cache result (data.cache) nor a prompt-only verdict (data.verdict)`];
   }
   if (shape.parseError) {
-    return ['P0 evidence is incomplete: coldstart verdict is not valid JSON (expected {"gaps":[...],"ticketHash":"…"})'];
+    return [`${label} evidence is incomplete: coldstart verdict is not valid JSON (expected {"gaps":[...],"ticketHash":"…"})`];
   }
   const errors = [];
   if (!Array.isArray(shape.gaps)) {
-    errors.push('P0 evidence is incomplete: coldstart record missing a gaps array');
+    errors.push(`${label} evidence is incomplete: coldstart record missing a gaps array`);
   } else if (shape.gaps.length > 0) {
-    errors.push(`P0 evidence is contradictory: coldstart recorded ${shape.gaps.length} unresolved gap(s)`);
+    errors.push(`${label} evidence is contradictory: coldstart recorded ${shape.gaps.length} unresolved gap(s)`);
   }
   const binding = ticketDefinitionBinding(cwd, ticket, dir);
   if (!binding) {
-    errors.push('P0 evidence is stale: ticket definition is absent');
+    errors.push(`${label} evidence is stale: ticket definition is absent`);
   } else if (shape.ticketHash !== binding.ticketHash) {
-    errors.push('P0 evidence is stale: ticket definition changed after coldstart ran');
+    errors.push(`${label} evidence is stale: ticket definition changed after coldstart ran`);
   }
   return errors;
 }
@@ -548,6 +549,42 @@ function p4IntegrityErrors(entries, ticket, revision, cwd) {
   return errors;
 }
 
+// p4-build and flail-check are bare-presence markers unless bound to the tree
+// they vouch for (#759): each must hash the files it covers (--files) and every
+// hash must still match the worktree. The LATEST entry of each marker is
+// judged, in any order — the shipped harness workflows record flail-check
+// before p4-build, so no ordering rule is sound. Absent markers are not
+// reported here — the presence check names them as missing.
+const TREE_BOUND_MARKERS = ['p4-build', 'flail-check'];
+
+function markerBindingErrors(marker, entry, cwd) {
+  const files = entry.files;
+  const paths = files && typeof files === 'object' && !Array.isArray(files) ? Object.keys(files) : [];
+  if (paths.length === 0) {
+    return [`P4 evidence is incomplete: ${marker} binds no files (record it with --files and the changed paths)`];
+  }
+  const current = hashFiles(paths, (path) => readFileSync(resolve(cwd, path)));
+  const errors = [];
+  for (const path of paths) {
+    if (typeof files[path] !== 'string') {
+      errors.push(`P4 evidence is incomplete: ${marker} missing hash for ${path}`);
+    } else if (current[path] === null) {
+      errors.push(`P4 evidence is stale: file cannot be read since ${marker} was recorded: ${path}`);
+    } else if (current[path] !== files[path]) {
+      errors.push(`P4 evidence is stale: file changed after ${marker} was recorded: ${path}`);
+    }
+  }
+  return errors;
+}
+
+export function p4EvidenceBindingErrors(entries, ticket, cwd) {
+  const scoped = entries.filter((entry) => matchesTicket(entry, ticket));
+  return TREE_BOUND_MARKERS.flatMap((marker) => {
+    const index = scoped.findLastIndex((entry) => entryType(entry) === marker);
+    return index === -1 ? [] : markerBindingErrors(marker, scoped[index], cwd);
+  });
+}
+
 export function requirementsForPhase(phase) {
   return PHASE_REQUIREMENTS[phase] ?? null;
 }
@@ -682,8 +719,8 @@ export function assertPhase(phase, { dir = ADLC_DIR, ticket, revision, cwd = pro
       errors: p1Errors,
     };
   }
-  const p0Errors = phase === 'p0' && ticket
-    ? coldstartIntegrityErrors(entries, ticket, cwd, dir)
+  const p0Errors = (phase === 'p0' || phase === 'p2') && ticket
+    ? coldstartIntegrityErrors(entries, ticket, cwd, dir, phase)
     : [];
   if (p0Errors.length > 0) {
     return {
@@ -713,6 +750,16 @@ export function assertPhase(phase, { dir = ADLC_DIR, ticket, revision, cwd = pro
       ticket,
       revision: resolvedRevision,
       errors: p4Errors,
+    };
+  }
+  const p4BindingErrors = phase === 'p4' ? p4EvidenceBindingErrors(entries, ticket, cwd) : [];
+  if (p4BindingErrors.length > 0) {
+    return {
+      ok: false,
+      operational: false,
+      phase,
+      ticket,
+      errors: p4BindingErrors,
     };
   }
   if (requiresRevision(phase) && !resolvedRevision) {
