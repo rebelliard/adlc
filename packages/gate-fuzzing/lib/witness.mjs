@@ -27,9 +27,82 @@ function defaultRunFn(witnessSpec, cwd) {
     stdio: 'pipe',
     shell: false,
   });
+  const isTimeout = r.error?.code === 'ETIMEDOUT' || (!r.error && (r.signal === 'SIGTERM' || r.status === null));
+  const spawnError = r.error && !isTimeout ? (r.error.code || r.error.message) : null;
+  const timedOut = isTimeout;
   return {
     status: r.status,
-    timedOut: r.signal === 'SIGTERM' || r.status === null,
+    exitCode: r.status,
+    timedOut,
+    spawnError,
+  };
+}
+
+/**
+ * Judge or verify witness results between baseline and candidate.
+ * Rejects spawn errors (e.g. ENOENT, EACCES) and shell launch failure exit codes (126, 127).
+ *
+ * @param {object} base - baseline run result or witnessSpec if called as (spec, dirs, opts)
+ * @param {object} cand - candidate run result or dirs
+ * @param {object} [opts]
+ * @returns {{verified:boolean, discriminates:boolean, reason:string}}
+ */
+export function verifyWitness(base, cand, opts = {}) {
+  if (base && typeof base === 'object' && ('cmd' in base || (cand && ('baselineDir' in cand || 'candidateDir' in cand)))) {
+    return discriminateWitness(base, cand, opts);
+  }
+
+  const b = base ?? {};
+  const c = cand ?? {};
+
+  if (b.spawnError || c.spawnError) {
+    const err = b.spawnError || c.spawnError;
+    return {
+      verified: false,
+      discriminates: false,
+      reason: `witness could not start (${err})`,
+    };
+  }
+
+  if (
+    b.exitCode === 126 || b.exitCode === 127 ||
+    c.exitCode === 126 || c.exitCode === 127 ||
+    b.status === 126 || b.status === 127 ||
+    c.status === 126 || c.status === 127
+  ) {
+    const code = [b.exitCode, c.exitCode, b.status, c.status].find((s) => s === 126 || s === 127);
+    return {
+      verified: false,
+      discriminates: false,
+      reason: `shell launch failure, exit ${code}`,
+    };
+  }
+
+  if (b.timedOut || c.timedOut) {
+    return {
+      verified: false,
+      discriminates: false,
+      reason: 'inconclusive',
+    };
+  }
+
+  const baseCode = b.exitCode ?? b.status;
+  const candCode = c.exitCode ?? c.status;
+
+  if (baseCode === 0 && Number.isInteger(candCode) && candCode > 0) {
+    return {
+      verified: true,
+      discriminates: true,
+      reason: 'ok',
+    };
+  }
+
+  return {
+    verified: false,
+    discriminates: false,
+    reason: baseCode !== 0
+      ? `baseline failed (exit ${baseCode})`
+      : `candidate passed or did not exit with a positive status (exit ${candCode})`,
   };
 }
 
@@ -41,7 +114,7 @@ function defaultRunFn(witnessSpec, cwd) {
  * @param {{cmd:string, args?:string[]}} witnessSpec
  * @param {{baselineDir:string, candidateDir:string}} dirs
  * @param {{trials:number, runFn?:Function}} opts
- * @returns {{discriminates:boolean, reason:string}}
+ * @returns {{discriminates:boolean, verified:boolean, reason:string}}
  */
 export function discriminateWitness(witnessSpec, dirs, opts = {}) {
   const { baselineDir, candidateDir } = dirs;
@@ -51,30 +124,64 @@ export function discriminateWitness(witnessSpec, dirs, opts = {}) {
   // Run N trials on baseline — must ALL exit 0
   for (let i = 0; i < trials; i++) {
     const r = runFn(witnessSpec, baselineDir);
-    if (r.timedOut) {
-      return { discriminates: false, reason: 'inconclusive' };
-    }
-    if (r.status !== 0) {
+    if (r.spawnError) {
       return {
         discriminates: false,
-        reason: `inconclusive: baseline trial ${i + 1} failed (exit ${r.status}) — witness is flaky on baseline`,
+        verified: false,
+        reason: `witness could not start on baseline (${r.spawnError})`,
+      };
+    }
+    const exitCode = r.exitCode ?? r.status;
+    if (exitCode === 126 || exitCode === 127) {
+      return {
+        discriminates: false,
+        verified: false,
+        reason: `shell launch failure on baseline, exit ${exitCode}`,
+      };
+    }
+    if (r.timedOut) {
+      return { discriminates: false, verified: false, reason: 'inconclusive' };
+    }
+    if (exitCode !== 0) {
+      return {
+        discriminates: false,
+        verified: false,
+        reason: `inconclusive: baseline trial ${i + 1} failed (exit ${exitCode}) — witness is flaky on baseline`,
       };
     }
   }
 
-  // Run N trials on candidate — must ALL exit non-0
+  // Run N trials on candidate — must ALL exit with a positive integer status
   for (let i = 0; i < trials; i++) {
     const r = runFn(witnessSpec, candidateDir);
-    if (r.timedOut) {
-      return { discriminates: false, reason: 'inconclusive' };
-    }
-    if (r.status === 0) {
+    if (r.spawnError) {
       return {
         discriminates: false,
-        reason: `inconclusive: candidate trial ${i + 1} passed (exit 0) — witness is flaky on candidate`,
+        verified: false,
+        reason: `witness could not start on candidate (${r.spawnError})`,
+      };
+    }
+    const exitCode = r.exitCode ?? r.status;
+    if (exitCode === 126 || exitCode === 127) {
+      return {
+        discriminates: false,
+        verified: false,
+        reason: `shell launch failure on candidate, exit ${exitCode}`,
+      };
+    }
+    if (r.timedOut) {
+      return { discriminates: false, verified: false, reason: 'inconclusive' };
+    }
+    if (!Number.isInteger(exitCode) || exitCode <= 0) {
+      return {
+        discriminates: false,
+        verified: false,
+        reason: exitCode === 0
+          ? `inconclusive: candidate trial ${i + 1} passed (exit 0) — witness is flaky on candidate`
+          : `inconclusive: candidate trial ${i + 1} did not exit with a positive status (${exitCode})`,
       };
     }
   }
 
-  return { discriminates: true, reason: 'ok' };
+  return { discriminates: true, verified: true, reason: 'ok' };
 }
