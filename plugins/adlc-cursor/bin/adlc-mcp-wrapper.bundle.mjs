@@ -1870,6 +1870,9 @@ function ticketStoreExists(root = ".", override = null) {
 var GIT_MAX_BUFFER3 = 64 * 1024 * 1024;
 var NULL_OBJECT = "0".repeat(40);
 
+// packages/core/lib/generated-glob-match.mjs
+var SLASH3 = "/".charCodeAt(0);
+
 // packages/core/lib/risk-tier.mjs
 var RISK_TIER_PATTERNS = Object.freeze({
   "auth-trust-boundary": Object.freeze([
@@ -1961,6 +1964,94 @@ var ARRAY_LITERAL_RE = new RegExp(
 // packages/core/lib/syntax.mjs
 import { fileURLToPath } from "node:url";
 var TYPESCRIPT_WORKER = fileURLToPath(new URL("./syntax-check-typescript.mjs", import.meta.url));
+
+// packages/core/lib/cluster.mjs
+var BASE_STOPWORDS = Object.freeze(/* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "by",
+  "from",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "not",
+  "no",
+  "nor",
+  "so",
+  "yet",
+  "both",
+  "either",
+  "neither",
+  "each",
+  "every",
+  "all",
+  "any",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "than",
+  "too",
+  "very",
+  "just",
+  "that",
+  "this",
+  "it",
+  "its",
+  "as",
+  "if",
+  "then",
+  "there",
+  "when",
+  "where",
+  "which",
+  "who",
+  "how",
+  "what",
+  "use",
+  "used",
+  "using",
+  "via",
+  "also",
+  "only",
+  "into",
+  "up",
+  "out",
+  "about",
+  "after",
+  "before"
+]));
 
 // plugins/adlc-cursor/generated-active-ticket.mjs
 import { lstatSync as lstatSync7, openSync as openSync4, fstatSync, readSync as readSync2, closeSync as closeSync4, constants as fsConstants2 } from "node:fs";

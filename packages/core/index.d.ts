@@ -337,6 +337,7 @@ export function classifyShellCommand(text: string): {
 
 // lib/railpath.mjs
 export function resolveRailPath(filePath: string, root: string): string;
+export function segmentsOf(p: string): string[];
 
 // lib/text.mjs — shared text-shaping helpers for capping prompt payloads
 export function tail(str: string, maxChars?: number): string;
@@ -352,6 +353,122 @@ export function checkSyntaxDetail(filePath: string, cwd: string, execPath?: stri
 };
 export function checkSyntax(filePath: string, cwd: string, execPath?: string): SyntaxCheckResult;
 export function syntaxCheckProblem(filePath: string): string | null;
+// lib/primitives.mjs
+export function writeFileAtomic(
+  filePath: string,
+  content: string | NodeJS.ArrayBufferView,
+  options?: { mode?: number }
+): void;
+export function acquireDirLock(
+  lockDir: string,
+  options?: { staleMs?: number }
+): () => void;
+export function redactSecrets<T = unknown>(input: T): T;
+export function readVerdictSource(source: string): Promise<string>;
+export function recordPromptOnlyVerdict<T = unknown>(options?: {
+  gate?: string;
+  ticket?: string;
+  verdict: string;
+  extra?: Record<string, unknown>;
+  dir?: string;
+  recordFn?: (params: { gate?: string; ticket?: string; rawData: string; dir?: string }) => T;
+}): T;
+
+// lib/inflight.mjs
+export function makeTempPath(targetPath: string, pid?: number): string;
+export function writeInflightAtomic(
+  targetPath: string,
+  content: string | NodeJS.ArrayBufferView,
+  options?: { tempPath?: string }
+): void;
+export function probeOwner(
+  pid: unknown,
+  killFn?: (pid: number, signal: number) => void
+): 'alive' | 'dead' | 'unknown';
+export function ownerStateFor(
+  recordPid: unknown,
+  selfPid?: number,
+  probe?: (pid: unknown) => 'alive' | 'dead' | 'unknown'
+): 'alive' | 'dead' | 'unknown';
+export function isContainedRelPath(relPath: unknown): boolean;
+export function resolveTarget(repoRoot: string, relFile: unknown): string | null;
+export function sweepStaleTemps(
+  targetPath: string,
+  options?: {
+    probe?: (pid: unknown) => 'alive' | 'dead' | 'unknown';
+    selfPid?: number;
+  }
+): number;
+export function clearRecord(recordPath: string): void;
+
+// lib/cluster.mjs
+export const BASE_STOPWORDS: ReadonlySet<string>;
+export function jaccard(setA: ReadonlySet<unknown>, setB: ReadonlySet<unknown>): number;
+export function clusterByTokenSets(
+  tokenSets: ReadonlyArray<ReadonlySet<string>>,
+  threshold?: number
+): number[][];
+
+// lib/proc.mjs
+export function thisHost(): string;
+export function pidAlive(pid: unknown): boolean;
+export function procStartTimeOf(
+  pid: unknown,
+  options?: {
+    platform?: string;
+    readFile?: (path: string, encoding: string) => string;
+    execFile?: (file: string, args: readonly string[], options: { encoding: string }) => string;
+  }
+): string | null;
+export function selfProcessIdentity(): {
+  pid: number;
+  host: string;
+  procStartTime: string | null;
+  pidStartTime: string | null;
+};
+export function defaultLockProbes(): {
+  host: string;
+  pidAlive: typeof pidAlive;
+  procStartTimeOf: typeof procStartTimeOf;
+  pidStartTimeOf: typeof procStartTimeOf;
+};
+
+// lib/trusted-binary.mjs
+export type TrustedBinaryStatLike = {
+  readonly uid: number;
+  readonly mode: number;
+};
+export type TrustedBinaryStats = {
+  file: TrustedBinaryStatLike;
+  link: TrustedBinaryStatLike;
+  dir: TrustedBinaryStatLike;
+  ancestors?: TrustedBinaryStatLike[];
+};
+export function resolveTrustedBinary(name: string, pathEnv: unknown): string | null;
+export function ownershipRejection(
+  stats: TrustedBinaryStats,
+  selfUid: number | null
+): string | null;
+export function ancestorDirs(file: string): string[];
+export function candidateAncestors(candidate: string, dir: string, name: string): string[];
+export function binaryCandidates(
+  name: string,
+  pathEnv: unknown
+): Array<{ candidate: string; rejection: string | null }>;
+export function candidateStats(
+  candidate: string,
+  dir: string,
+  name: string,
+  file: TrustedBinaryStatLike,
+  selfUid: number | null
+): TrustedBinaryStats;
+export function candidateRejection(
+  dir: string,
+  stats: TrustedBinaryStats | null,
+  selfUid: number | null
+): string | null;
+export function untrustedBinaryReason(name: string, pathEnv: unknown): string | null;
 
 // Types of the @adlc/core/test-kit subpath, declared in lib/test-kit.d.mts.
 export type { TestContext, GitRepoOptions, GitRepoResult, RunBinOptions } from './lib/test-kit.mjs';
+
