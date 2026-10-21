@@ -13,6 +13,7 @@ export * from './lib/shell.mjs';
 export * from './lib/railpath.mjs';
 export * as mutate from './lib/mutate.mjs';
 export * from './lib/text.mjs';
+export * from './lib/syntax.mjs';
 export * from './lib/primitives.mjs';
 export * from './lib/inflight.mjs';
 export * from './lib/cluster.mjs';

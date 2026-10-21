@@ -82,12 +82,15 @@ test('hollowTestWouldMutate does not treat extensionless files or dotfiles as so
   }
 });
 
-test('hollowTestWouldMutate admits plain JavaScript and rejects TS, Python, and non-code extensions', () => {
-  for (const f of ['a.mjs', 'a.cjs', 'a.js', 'packages/x/lib/y.mjs', 'plugins/p/hooks/h.mjs']) {
+test('hollowTestWouldMutate admits JavaScript and the TypeScript family, and rejects declarations, Python, and non-code extensions', () => {
+  for (const f of [
+    'a.mjs', 'a.cjs', 'a.js', 'packages/x/lib/y.mjs', 'plugins/p/hooks/h.mjs',
+    'a.ts', 'a.mts', 'a.cts', 'a.tsx', 'a.jsx', 'apps/docs/app/page.tsx', 'plugins/adlc-pi/index.ts',
+  ]) {
     assert.equal(hollowTestWouldMutate(f), true, `${f} is mutable source`);
   }
   for (const f of [
-    'a.ts', 'a.mts', 'a.cts', 'a.tsx', 'a.jsx', 'a.py', 'apps/docs/app/page.tsx',
+    'a.d.ts', 'packages/core/lib/test-kit.d.mts', 'a.d.cts', 'a.py',
     'src/app.py', 'src/test_app.py', 'src/app_test.py', 'conftest.py',
     'packages/foo/a.md', 'packages/foo/a.json', 'packages/foo/a.yml',
     'packages/foo/a.yaml', 'packages/foo/a.lock', 'packages/foo/a.txt',
