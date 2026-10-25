@@ -20,7 +20,7 @@
     "packages/fleet/bin/fleet.mjs",
     "packages/fleet/test/run-live.test.mjs"
   ],
-  "status": "ready",
+  "status": "completed",
   "title": "fleet: bind read-only system roots including /bin in preflight canary (#1266)",
   "verify": "node --test packages/fleet/test/run-live.test.mjs"
 }

@@ -20,7 +20,7 @@
     "plugins/adlc-herdr/package.json",
     "plugins/adlc-herdr/test/manifest.test.mjs"
   ],
-  "status": "ready",
+  "status": "completed",
   "title": "plugin(adlc-herdr): ship LICENSE file in package directory and npm tarball (#876)",
   "verify": "node --test plugins/adlc-herdr/test/manifest.test.mjs"
 }

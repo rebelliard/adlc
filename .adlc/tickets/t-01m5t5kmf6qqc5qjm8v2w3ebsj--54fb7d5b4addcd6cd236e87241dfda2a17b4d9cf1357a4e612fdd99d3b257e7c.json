@@ -22,7 +22,7 @@
     ".claude/backlog-groom-profile.json",
     "packages/backlog-groom/test/fixtures/groomed-set.v4.json"
   ],
-  "status": "ready",
+  "status": "completed",
   "title": "backlog-groom: allow valid issues to rank low and floor relabel in repo profile (#1058)",
   "verify": "node --test packages/backlog-groom/test/rank.test.mjs packages/backlog-groom/test/floor.test.mjs packages/backlog-groom/test/profile.test.mjs"
 }

@@ -20,7 +20,7 @@
     "packages/prosecute/README.md",
     "packages/prosecute/test/prosecute-schema-validation.test.mjs"
   ],
-  "status": "ready",
+  "status": "completed",
   "title": "prosecute: document validator rules and transcript example in README (#891)",
   "verify": "node --test packages/prosecute/test/prosecute-schema-validation.test.mjs"
 }
