@@ -20,8 +20,9 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-function repoRemovingSecret() {
+function repoRemovingSecret(t) {
   const dir = mkdtempSync(join(tmpdir(), 'adlc-oc-mask-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.com');
   git(dir, 'config', 'user.name', 't');
@@ -36,8 +37,7 @@ function repoRemovingSecret() {
 }
 
 test('captureDiff against the real git binary masks a removed token and keeps the rest of the diff', (t) => {
-  const dir = repoRemovingSecret();
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = repoRemovingSecret(t);
   const { diff, error } = captureDiff({ base: 'main', cwd: dir });
   assert.equal(error, null);
   assert.ok(!diff.includes(TOKEN), 'the removed token must not reach the review text');
@@ -47,8 +47,7 @@ test('captureDiff against the real git binary masks a removed token and keeps th
 });
 
 test('no lens or verifier prompt carries a token the change removes', async (t) => {
-  const dir = repoRemovingSecret();
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = repoRemovingSecret(t);
   const prompts = [];
   const session = {
     create: async () => ({ id: `ses_child_${prompts.length}` }),

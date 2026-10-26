@@ -1851,6 +1851,22 @@ var PROVIDER_NAMES = PROVIDERS.map((p) => p.name);
 // packages/core/lib/git.mjs
 var GIT_MAX_BUFFER2 = 64 * 1024 * 1024;
 
+// packages/core/lib/secret-shapes.mjs
+var SECRET_PATTERNS = [
+  [/\bAKIA[0-9A-Z]{16}\b/, "an AWS access key id"],
+  [/\bASIA[0-9A-Z]{16}\b/, "an AWS temporary access key id"],
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/, "a GitHub token"],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}\b/, "a GitHub fine-grained token"],
+  [/\bglpat-[A-Za-z0-9_-]{20,}\b/, "a GitLab token"],
+  [/\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/, "an OpenAI API key"],
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/, "a Slack token"],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/, "a Google API key"],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, "a private key block"],
+  [/\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*/i, "a bearer token"],
+  [/\b((?:api[-_]?key|secret|passwd|password|token|access[-_]?key)\b\s*[:=]\s*)\S{8,}/i, "an inline credential assignment"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./, "a JWT"]
+];
+
 // packages/core/lib/tickets.mjs
 import { existsSync as existsSync11, lstatSync as lstatSync6 } from "node:fs";
 import { dirname as dirname9, isAbsolute as isAbsolute3, join as join9 } from "node:path";
@@ -2056,6 +2072,10 @@ var BASE_STOPWORDS = Object.freeze(/* @__PURE__ */ new Set([
   "after",
   "before"
 ]));
+
+// packages/core/lib/diff-mask.mjs
+var ENV_ASSIGNMENT = /\b([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIALS?)[A-Z0-9_]*\s*[:=]\s*["']?)[^\s"']{8,}/g;
+var MASK_RULES = [...SECRET_PATTERNS.map(([pattern]) => new RegExp(pattern.source, `${pattern.flags}g`)), ENV_ASSIGNMENT];
 
 // plugins/adlc-cursor/generated-active-ticket.mjs
 import { lstatSync as lstatSync7, openSync as openSync4, fstatSync, readSync as readSync2, closeSync as closeSync4, constants as fsConstants2 } from "node:fs";
