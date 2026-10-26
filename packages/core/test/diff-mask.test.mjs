@@ -59,6 +59,8 @@ test('an inline credential assignment keeps its name and quotes and loses its va
 
 test('credential names in any case and identifier style are masked', () => {
   const cases = [
+    ['DB_PASSWORD          = hunter2hunter2', `DB_PASSWORD          = ${MASKED_SECRET}`],
+    ['password =            "hunter2hunter2"', `password =            "${MASKED_SECRET}"`],
     ['API_TOKEN=abcd1234efgh', `API_TOKEN=${MASKED_SECRET}`],
     ['DB_PASSWORD: "letmein-now"', `DB_PASSWORD: "${MASKED_SECRET}"`],
     ['"password": "hunter2hunter2"', `"password": "${MASKED_SECRET}"`],
@@ -75,6 +77,7 @@ test('credential names in any case and identifier style are masked', () => {
 test('a quoted value with an escaped quote or no closing quote is still masked', () => {
   assert.equal(maskSecretText('token = "abc\\"defghijklmnop"'), `token = "${MASKED_SECRET}"`);
   assert.equal(maskSecretText('secret = "Hunter2Hunter2xxyy'), `secret = "${MASKED_SECRET}`, 'a string continued on the next line');
+  assert.equal(maskSecretText('export DB_PASSWORD="hunter2hunter2\\'), `export DB_PASSWORD="${MASKED_SECRET}`, 'a trailing line-continuation backslash');
 });
 
 test('a removed line over the length cap is masked whole', () => {
@@ -88,7 +91,7 @@ test('a removed line over the length cap is masked whole', () => {
 });
 
 test('adversarial lines just under the cap mask in bounded time', () => {
-  const inputs = ['_token', 'pwd.', 'secret=', 'token:', '-', 'a://b'].map((unit) => unit.repeat(Math.floor((MAX_MASKED_LINE - 10) / unit.length)));
+  const inputs = ['_token', 'pwd.', 'secret=', 'token:', '-', 'a://b', 'password ', 'token = "\\'].map((unit) => unit.repeat(Math.floor((MAX_MASKED_LINE - 10) / unit.length)));
   for (const input of inputs) {
     const started = process.hrtime.bigint();
     maskSecretText(input);

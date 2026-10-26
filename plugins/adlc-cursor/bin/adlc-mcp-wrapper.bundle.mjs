@@ -2076,12 +2076,12 @@ var BASE_STOPWORDS = Object.freeze(/* @__PURE__ */ new Set([
 
 // packages/core/lib/diff-mask.mjs
 var MASKED_SECRET = "[redacted]";
-var NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]{0,48}?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]{0,48}["']?\s{0,8}(?::=|=>|[:=])\s{0,8}`;
+var NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]{0,48}?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]{0,48}["']?\s*(?::=|=>|[:=])\s*`;
 var ASSIGNMENT_RULES = [
   // `name = "value with anything"` — the quoted value, escapes included, up to
-  // its closing quote or the end of the line (a multi-line string, or a hunk
-  // header git cut short).
-  [new RegExp(`(${NAME})(["'\`])((?:\\\\.|(?!\\2)[^\\\\]){8,}?)(\\2|$)`, "gi"), (_m, prefix, quote, _value, close) => `${prefix}${quote}${MASKED_SECRET}${close}`],
+  // its closing quote or the end of the line (a multi-line string, a trailing
+  // line-continuation backslash, or a hunk header git cut short).
+  [new RegExp(`(${NAME})(["'\`])((?:\\\\[^]|\\\\$|(?!\\2)[^\\\\]){8,}?)(\\2|$)`, "gi"), (_m, prefix, quote, _value, close) => `${prefix}${quote}${MASKED_SECRET}${close}`],
   // `name = value` — an unquoted value up to whitespace or a quote.
   [new RegExp(`(${NAME})(?!["'\`])[^\\s"'\`]{8,}`, "gi"), (_m, prefix) => `${prefix}${MASKED_SECRET}`],
   // `scheme://user:password@host` — the password in URL userinfo.

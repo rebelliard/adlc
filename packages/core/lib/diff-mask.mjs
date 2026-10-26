@@ -32,16 +32,18 @@ const PEM_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
 // The ledger's own assignment shape needs a word boundary, which `_` and
 // camelCase defeat; this one only needs the name not to start mid-word.
 // Both identifier parts are bounded: unbounded, a long run of identifier
-// characters with no `=` after it backtracks in cubic time.
-const NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]{0,48}?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]{0,48}["']?\s{0,8}(?::=|=>|[:=])\s{0,8}`;
+// characters with no `=` after it backtracks in cubic time. The padding around
+// the operator stays unbounded so column-aligned configs still match; it
+// cannot overlap the name characters, so it costs one linear scan.
+const NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]{0,48}?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]{0,48}["']?\s*(?::=|=>|[:=])\s*`;
 
 // Mask-only rules, applied before the shared shapes. Each keeps the name (and
 // any quotes) and replaces the value.
 const ASSIGNMENT_RULES = [
   // `name = "value with anything"` — the quoted value, escapes included, up to
-  // its closing quote or the end of the line (a multi-line string, or a hunk
-  // header git cut short).
-  [new RegExp(`(${NAME})(["'\`])((?:\\\\.|(?!\\2)[^\\\\]){8,}?)(\\2|$)`, 'gi'), (_m, prefix, quote, _value, close) => `${prefix}${quote}${MASKED_SECRET}${close}`],
+  // its closing quote or the end of the line (a multi-line string, a trailing
+  // line-continuation backslash, or a hunk header git cut short).
+  [new RegExp(`(${NAME})(["'\`])((?:\\\\[^]|\\\\$|(?!\\2)[^\\\\]){8,}?)(\\2|$)`, 'gi'), (_m, prefix, quote, _value, close) => `${prefix}${quote}${MASKED_SECRET}${close}`],
   // `name = value` — an unquoted value up to whitespace or a quote.
   [new RegExp(`(${NAME})(?!["'\`])[^\\s"'\`]{8,}`, 'gi'), (_m, prefix) => `${prefix}${MASKED_SECRET}`],
   // `scheme://user:password@host` — the password in URL userinfo.
