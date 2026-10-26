@@ -364,6 +364,10 @@ export function acquireDirLock(
   options?: { staleMs?: number }
 ): () => void;
 export function redactSecrets<T = unknown>(input: T): T;
+export const MASKED_SECRET: string;
+export const MASKED_PRIVATE_KEY: string;
+export function maskSecretText(text: string): string;
+export function maskRemovedSecrets(diff: string): string;
 export function readVerdictSource(source: string): Promise<string>;
 export function recordPromptOnlyVerdict<T = unknown>(options?: {
   gate?: string;

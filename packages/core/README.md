@@ -93,6 +93,12 @@ TypeScript is resolved from the repository under test and is not a dependency of
 - `tail(str, maxChars = 4000)` → the last `maxChars` characters of `str`, unchanged if already within limit. Hoisted here (was duplicated in consensus-fix) so every caller capping a prompt payload shares one implementation.
 - `fence(label, content, maxChars, opts?)` → wraps `content` in `<<UNTRUSTED:...>>`/`<<END:...>>` markers declaring it inert data, capped to `maxChars` (`maxChars` is required, not optional; there is no uncapped call). Truncation keeps the tail by default; pass `{ bias: 'head' }` to keep the opening (spec-shaped content). `opts` must be a plain object whose only key is `bias`, and `bias` must be `'head'` or `'tail'`; anything else throws. Used by `packages/fleet` to fence prior build/gate/prosecution logs into a fix charter.
 
+## diff-mask (removed-line credential masking)
+
+- `maskRemovedSecrets(diff)` → `diff` with credentials masked on its **removed** (`-`) lines only, for a diff a review model is about to read. A change that deletes a secret still carries it on its `-` lines; added and context lines are at HEAD and stay visible so a reviewer can flag a secret the change adds. Masks the known provider shapes the findings ledger refuses, `name = value` credential assignments (including env-style `API_TOKEN=…`), high-entropy tokens, and private key blocks (tracked on the old side of the file, back-filled from an END line whose BEGIN is outside the context). File headers are never touched; the line count is kept. Best-effort: a short, low-entropy password with no credential-like name is not caught.
+- `maskSecretText(text)` → the same masking for one line of text.
+- `MASKED_SECRET` (`[redacted]`), `MASKED_PRIVATE_KEY` (`[redacted private key]`) — the placeholders.
+
 ## test-kit (`@adlc/core/test-kit`)
 
 Fixture helpers for `node:test` suites; typed by `lib/test-kit.d.mts`.

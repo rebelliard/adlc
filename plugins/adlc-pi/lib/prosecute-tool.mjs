@@ -13,7 +13,7 @@
 // callability end-to-end.
 
 import { isAbsolute, join } from 'node:path';
-import { loadTickets } from '@adlc/core';
+import { loadTickets, maskRemovedSecrets } from '@adlc/core';
 import { prosecute, defaultRunLens, renderSummary } from './prosecutor.mjs';
 import { resolvePiPeer } from './pi-resolve.mjs';
 
@@ -86,6 +86,9 @@ export async function validateBaseRef(pi, root, base) {
 
 /**
  * The diff under prosecution: `git diff <base> HEAD --`. Empty when no base.
+ * Credentials on its removed lines are masked (maskRemovedSecrets): every lens
+ * and verifier prompt carries this text to a model provider, and a change that
+ * deletes a secret must not send it there.
  * `base` here is already validated by validateBaseRef (a bare sha), and the
  * trailing `--` pathspec terminator is defense-in-depth so nothing downstream
  * can be misread as an option.
@@ -94,7 +97,7 @@ async function collectDiff(pi, root, base) {
   const args = base ? ['diff', base, 'HEAD', '--'] : ['diff', 'HEAD', '--'];
   try {
     const res = await pi.exec('git', args, { cwd: root });
-    return res?.stdout ?? '';
+    return maskRemovedSecrets(res?.stdout ?? '');
   } catch (err) {
     throw new Error(`could not collect the diff (git ${args.join(' ')}): ${err.message}`);
   }
