@@ -12,10 +12,15 @@
 // characters, or a low-entropy password with no telltale name, is not caught. Over-masking only hides removed text from the reviewer, so
 // every ambiguous case masks.
 
-import { SECRET_PATTERNS, TOKEN_SEPARATORS, isRandomSecretToken } from './secret-shapes.mjs';
+import { INLINE_ASSIGNMENT, SECRET_PATTERNS, TOKEN_SEPARATORS, isRandomSecretToken } from './secret-shapes.mjs';
 
 export const MASKED_SECRET = '[redacted]';
 export const MASKED_PRIVATE_KEY = '[redacted private key]';
+export const MASKED_LONG_LINE = '[redacted long line]';
+
+// A removed line longer than this is masked whole: it is generated or minified
+// text no reviewer reads line by line, and it bounds the regex work per line.
+export const MAX_MASKED_LINE = 2000;
 
 const PEM_BEGIN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/;
@@ -26,13 +31,17 @@ const PEM_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
 // `API_TOKEN`, `clientSecret`, `aws_secret_access_key`, `"apiKey"`, `db.passwd`.
 // The ledger's own assignment shape needs a word boundary, which `_` and
 // camelCase defeat; this one only needs the name not to start mid-word.
-const NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]*?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|[:=])\s*`;
+// Both identifier parts are bounded: unbounded, a long run of identifier
+// characters with no `=` after it backtracks in cubic time.
+const NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]{0,48}?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]{0,48}["']?\s{0,8}(?::=|=>|[:=])\s{0,8}`;
 
 // Mask-only rules, applied before the shared shapes. Each keeps the name (and
 // any quotes) and replaces the value.
 const ASSIGNMENT_RULES = [
-  // `name = "value with anything"` — the quoted value up to its closing quote.
-  [new RegExp(`(${NAME})(["'\`])((?:(?!\\2).){8,}?)\\2`, 'gi'), (_m, prefix, quote) => `${prefix}${quote}${MASKED_SECRET}${quote}`],
+  // `name = "value with anything"` — the quoted value, escapes included, up to
+  // its closing quote or the end of the line (a multi-line string, or a hunk
+  // header git cut short).
+  [new RegExp(`(${NAME})(["'\`])((?:\\\\.|(?!\\2)[^\\\\]){8,}?)(\\2|$)`, 'gi'), (_m, prefix, quote, _value, close) => `${prefix}${quote}${MASKED_SECRET}${close}`],
   // `name = value` — an unquoted value up to whitespace or a quote.
   [new RegExp(`(${NAME})(?!["'\`])[^\\s"'\`]{8,}`, 'gi'), (_m, prefix) => `${prefix}${MASKED_SECRET}`],
   // `scheme://user:password@host` — the password in URL userinfo.
@@ -45,7 +54,7 @@ const ASSIGNMENT_RULES = [
 // inline-assignment shape is left out: ASSIGNMENT_RULES cover every name it
 // knows, and running it after them would swallow the quotes they keep.
 const SHAPE_RULES = SECRET_PATTERNS
-  .filter(([, what]) => what !== 'an inline credential assignment')
+  .filter(([pattern]) => pattern !== INLINE_ASSIGNMENT)
   .map(([pattern]) => [new RegExp(pattern.source, `${pattern.flags}g`), () => MASKED_SECRET]);
 
 const MASK_RULES = [...ASSIGNMENT_RULES, ...SHAPE_RULES];
@@ -60,13 +69,14 @@ function maskTokens(text) {
 /** Mask every credential shape in one line of removed content. */
 export function maskSecretText(text) {
   let out = String(text);
+  if (out.length > MAX_MASKED_LINE) return MASKED_LONG_LINE;
   for (const [rule, replace] of MASK_RULES) out = out.replace(rule, replace);
   return maskTokens(out);
 }
 
 // `@@ -a,b +c,d @@ <function context>`: git copies the context text from a
 // nearby line of the file, which can be the very line the change removes.
-const HUNK_HEADER = /^(@@+ [^@]*@@+)(.*)$/;
+const HUNK_HEADER = /^(@@+ [^@]*@@+)(.*)$/s;
 
 function maskHunkHeader(line) {
   const m = HUNK_HEADER.exec(line);

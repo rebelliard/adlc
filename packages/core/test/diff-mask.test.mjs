@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { maskRemovedSecrets, maskSecretText, MASKED_SECRET, MASKED_PRIVATE_KEY } from '../lib/diff-mask.mjs';
+import { maskRemovedSecrets, maskSecretText, MASKED_SECRET, MASKED_PRIVATE_KEY, MASKED_LONG_LINE, MAX_MASKED_LINE } from '../lib/diff-mask.mjs';
 import * as core from '../index.mjs';
 
 const GH_TOKEN = ['gh', 'p_', 'aB3dE5fG7hI9jK1lM3nO5pQ7rS9tU1vW3xY5'].join('');
@@ -30,6 +30,8 @@ test('core re-exports the diff mask from its public surface', () => {
   assert.equal(core.maskSecretText, maskSecretText);
   assert.equal(core.MASKED_SECRET, '[redacted]');
   assert.equal(core.MASKED_PRIVATE_KEY, '[redacted private key]');
+  assert.equal(core.MASKED_LONG_LINE, '[redacted long line]');
+  assert.equal(core.MAX_MASKED_LINE, 2000);
 });
 
 test('a removed provider token is masked; the same token added or as context is kept', () => {
@@ -70,6 +72,31 @@ test('credential names in any case and identifier style are masked', () => {
   for (const [input, expected] of cases) assert.equal(maskSecretText(input), expected, input);
 });
 
+test('a quoted value with an escaped quote or no closing quote is still masked', () => {
+  assert.equal(maskSecretText('token = "abc\\"defghijklmnop"'), `token = "${MASKED_SECRET}"`);
+  assert.equal(maskSecretText('secret = "Hunter2Hunter2xxyy'), `secret = "${MASKED_SECRET}`, 'a string continued on the next line');
+});
+
+test('a removed line over the length cap is masked whole', () => {
+  const long = 'x'.repeat(MAX_MASKED_LINE + 1);
+  assert.equal(maskSecretText(long), MASKED_LONG_LINE);
+  assert.equal(maskSecretText('x'.repeat(MAX_MASKED_LINE)), 'x'.repeat(MAX_MASKED_LINE), 'a line at the cap is scanned, not dropped');
+  const diff = fileDiff('min.js', [`-${long}`, `+${long}`]);
+  const lines = maskRemovedSecrets(diff).split('\n');
+  assert.equal(lines[5], `-${MASKED_LONG_LINE}`);
+  assert.equal(lines[6], `+${long}`, 'an added long line is kept');
+});
+
+test('adversarial lines just under the cap mask in bounded time', () => {
+  const inputs = ['_token', 'pwd.', 'secret=', 'token:', '-', 'a://b'].map((unit) => unit.repeat(Math.floor((MAX_MASKED_LINE - 10) / unit.length)));
+  for (const input of inputs) {
+    const started = process.hrtime.bigint();
+    maskSecretText(input);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(ms < 500, `${input.slice(0, 12)}… took ${ms.toFixed(0)} ms`);
+  }
+});
+
 test('short values and names that merely contain a credential word mid-identifier are kept', () => {
   assert.equal(maskSecretText('AWS_SECRET_ACCESS_KEY=short'), 'AWS_SECRET_ACCESS_KEY=short', 'under 8 chars is not a credential value');
   assert.equal(maskSecretText('MAX_TOKENS = 4096'), 'MAX_TOKENS = 4096', 'a short numeric setting is kept');
@@ -105,6 +132,8 @@ test('the function context git appends to a hunk header is masked; the ranges ar
   assert.equal(lines[7], '-    y = 1');
   assert.equal(lines[8], '@@ -30 +29 @@', 'a header with no context is unchanged');
   assert.ok(!lines.join('\n').includes(GH_TOKEN));
+  const separator = maskRemovedSecrets(`@@ -1 +1 @@ password = "Hunter2Hunter2xx" \u2028z`);
+  assert.equal(separator, `@@ -1 +1 @@ password = "${MASKED_SECRET}" \u2028z`, 'a line separator in the context does not skip the header');
 });
 
 test('a removed line whose content starts with "--" is still content inside a hunk', () => {

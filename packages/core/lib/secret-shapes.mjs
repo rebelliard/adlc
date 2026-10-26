@@ -10,6 +10,8 @@
 //
 // The inline-assignment pattern captures its `name =` prefix in group 1 so a mask
 // can keep the name and replace only the value; `.test()` callers ignore groups.
+export const INLINE_ASSIGNMENT = /\b((?:api[-_]?key|secret|passwd|password|token|access[-_]?key)\b\s*[:=]\s*)\S{8,}/i;
+
 export const SECRET_PATTERNS = [
   [/\bAKIA[0-9A-Z]{16}\b/, 'an AWS access key id'],
   [/\bASIA[0-9A-Z]{16}\b/, 'an AWS temporary access key id'],
@@ -21,7 +23,7 @@ export const SECRET_PATTERNS = [
   [/\bAIza[0-9A-Za-z_-]{35}\b/, 'a Google API key'],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key block'],
   [/\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*/i, 'a bearer token'],
-  [/\b((?:api[-_]?key|secret|passwd|password|token|access[-_]?key)\b\s*[:=]\s*)\S{8,}/i, 'an inline credential assignment'],
+  [INLINE_ASSIGNMENT, 'an inline credential assignment'],
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\./, 'a JWT'],
 ];
 
