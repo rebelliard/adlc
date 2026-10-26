@@ -34,6 +34,11 @@ test('no lens prompt carries a token the change removes; the masked removal is s
   git(dir, 'config', 'user.email', 't@example.com');
   git(dir, 'config', 'user.name', 't');
   git(dir, 'config', 'commit.gpgsign', 'false');
+  // A user config that changes `git diff` output must not switch the mask off:
+  // forced color, and an external driver that prints the old file raw.
+  git(dir, 'config', 'color.ui', 'always');
+  writeFileSync(join(dir, 'raw-diff.sh'), '#!/bin/sh\ncat "$2"\n', { mode: 0o755 });
+  git(dir, 'config', 'diff.external', join(dir, 'raw-diff.sh'));
   writeFileSync(join(dir, 'config.mjs'), `export const token = "${TOKEN}";\n`);
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'base');
@@ -52,6 +57,6 @@ test('no lens prompt carries a token the change removes; the masked removal is s
   assert.equal(result.isError, false);
   assert.ok(prompts.length > 0, 'lenses ran on the collected diff');
   for (const prompt of prompts) assert.ok(!prompt.includes(TOKEN), 'a lens prompt carried the removed token');
-  assert.ok(prompts.some((p) => p.includes('-export const token = [redacted]')), 'lenses still see the masked removal');
+  assert.ok(prompts.some((p) => p.includes('-export const token = "[redacted]";')), 'lenses still see the masked removal');
   assert.ok(prompts.some((p) => p.includes('+export const token = process.env.TOKEN;')), 'added lines are unchanged');
 });

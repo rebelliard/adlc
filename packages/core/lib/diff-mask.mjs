@@ -6,9 +6,10 @@
 // a secret the change ADDS.
 //
 // Best-effort by construction (see secret-shapes.mjs): it covers the known
-// provider shapes, `name = value` credential assignments, high-entropy tokens,
-// and private key blocks. A short, low-entropy password with no telltale name
-// is not caught. Over-masking only hides removed text from the reviewer, so
+// provider shapes, `name = value` credential assignments (any case, any
+// identifier style, quoted or not, `=`/`:`/`:=`/`=>`), URL userinfo passwords,
+// Basic auth, high-entropy tokens, and private key blocks. A value under 8
+// characters, or a low-entropy password with no telltale name, is not caught. Over-masking only hides removed text from the reviewer, so
 // every ambiguous case masks.
 
 import { SECRET_PATTERNS, TOKEN_SEPARATORS, isRandomSecretToken } from './secret-shapes.mjs';
@@ -21,12 +22,33 @@ const PEM_END = /-----END [A-Z ]*PRIVATE KEY-----/;
 // A PEM body line: base64 only, optionally padded.
 const PEM_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
 
-// Env-style names the shared list misses because `\b` does not split on `_`:
-// `API_TOKEN=…`, `DB_PASSWORD: …`. Mask-only: the ledger check does not need it.
-const ENV_ASSIGNMENT = /\b([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIALS?)[A-Z0-9_]*\s*[:=]\s*["']?)[^\s"']{8,}/g;
+// A credential-like name, in any case and inside any identifier: `password`,
+// `API_TOKEN`, `clientSecret`, `aws_secret_access_key`, `"apiKey"`, `db.passwd`.
+// The ledger's own assignment shape needs a word boundary, which `_` and
+// camelCase defeat; this one only needs the name not to start mid-word.
+const NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]*?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|[:=])\s*`;
 
-// Every shared shape, made global so one line can hold several.
-const MASK_RULES = [...SECRET_PATTERNS.map(([pattern]) => new RegExp(pattern.source, `${pattern.flags}g`)), ENV_ASSIGNMENT];
+// Mask-only rules, applied before the shared shapes. Each keeps the name (and
+// any quotes) and replaces the value.
+const ASSIGNMENT_RULES = [
+  // `name = "value with anything"` — the quoted value up to its closing quote.
+  [new RegExp(`(${NAME})(["'\`])((?:(?!\\2).){8,}?)\\2`, 'gi'), (_m, prefix, quote) => `${prefix}${quote}${MASKED_SECRET}${quote}`],
+  // `name = value` — an unquoted value up to whitespace or a quote.
+  [new RegExp(`(${NAME})(?!["'\`])[^\\s"'\`]{8,}`, 'gi'), (_m, prefix) => `${prefix}${MASKED_SECRET}`],
+  // `scheme://user:password@host` — the password in URL userinfo.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+(?=@)/gi, (_m, prefix) => `${prefix}${MASKED_SECRET}`],
+  // `Authorization: Basic <base64 user:pass>`.
+  [/(\bBasic\s+)[A-Za-z0-9+/]{8,}={0,2}/g, (_m, prefix) => `${prefix}${MASKED_SECRET}`],
+];
+
+// The shared shapes, made global so one line can hold several. The ledger's
+// inline-assignment shape is left out: ASSIGNMENT_RULES cover every name it
+// knows, and running it after them would swallow the quotes they keep.
+const SHAPE_RULES = SECRET_PATTERNS
+  .filter(([, what]) => what !== 'an inline credential assignment')
+  .map(([pattern]) => [new RegExp(pattern.source, `${pattern.flags}g`), () => MASKED_SECRET]);
+
+const MASK_RULES = [...ASSIGNMENT_RULES, ...SHAPE_RULES];
 
 function maskTokens(text) {
   return text
@@ -38,17 +60,28 @@ function maskTokens(text) {
 /** Mask every credential shape in one line of removed content. */
 export function maskSecretText(text) {
   let out = String(text);
-  for (const rule of MASK_RULES) {
-    out = out.replace(rule, (_match, prefix) => (typeof prefix === 'string' ? `${prefix}${MASKED_SECRET}` : MASKED_SECRET));
-  }
+  for (const [rule, replace] of MASK_RULES) out = out.replace(rule, replace);
   return maskTokens(out);
+}
+
+// `@@ -a,b +c,d @@ <function context>`: git copies the context text from a
+// nearby line of the file, which can be the very line the change removes.
+const HUNK_HEADER = /^(@@+ [^@]*@@+)(.*)$/;
+
+function maskHunkHeader(line) {
+  const m = HUNK_HEADER.exec(line);
+  return m ? `${m[1]}${maskSecretText(m[2])}` : line;
 }
 
 /**
  * Return `diff` with credentials masked on its removed lines.
  *
  * The diff is walked per file section. Only lines inside a hunk (after `@@`)
- * are content; `---`/`+++` headers are never touched. Private key blocks are
+ * are content; `---`/`+++` headers are never touched. The function-context
+ * text git appends to a `@@` header is masked like a removed line, because git
+ * copies it from the file and it can be the removed line itself. The input
+ * must be plain `git diff` output: run git with `--no-color --no-ext-diff`, or
+ * a colored or external-driver diff is not recognised and nothing is masked. Private key blocks are
  * tracked on the OLD side of the file (removed and context lines): an added
  * END line cannot close a block that is still being removed. A block whose
  * BEGIN line falls outside the diff context is caught at its END line, which
@@ -77,6 +110,7 @@ export function maskRemovedSecrets(diff) {
     if (line.startsWith('@@')) {
       inHunk = true;
       oldSide = [];
+      out[i] = maskHunkHeader(line);
       continue;
     }
     if (!inHunk) continue;

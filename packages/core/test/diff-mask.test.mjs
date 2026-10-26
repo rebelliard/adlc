@@ -48,16 +48,38 @@ test('every shape on one removed line is masked, and nothing else on it changes'
   assert.equal(maskSecretText(`aws=${AWS_KEY} gh=${GH_TOKEN} n=42`), `aws=${MASKED_SECRET} gh=${MASKED_SECRET} n=42`);
 });
 
-test('an inline credential assignment keeps its name and loses its value', () => {
+test('an inline credential assignment keeps its name and quotes and loses its value', () => {
   assert.equal(maskSecretText('password: hunter2supersecret'), `password: ${MASKED_SECRET}`);
-  assert.equal(maskSecretText('const token = "abcd1234efgh";'), `const token = ${MASKED_SECRET}`);
+  assert.equal(maskSecretText('const token = "abcd1234efgh";'), `const token = "${MASKED_SECRET}";`);
+  assert.equal(maskSecretText("secret = 'two words here'"), `secret = '${MASKED_SECRET}'`, 'a quoted value runs to its closing quote');
+  assert.equal(maskSecretText('password = ab;cd,efgh12'), `password = ${MASKED_SECRET}`, 'punctuation inside an unquoted value does not cut it short');
 });
 
-test('env-style secret names the word-boundary pattern misses are masked', () => {
-  assert.equal(maskSecretText('API_TOKEN=abcd1234efgh'), `API_TOKEN=${MASKED_SECRET}`);
-  assert.equal(maskSecretText('DB_PASSWORD: "letmein-now"'), `DB_PASSWORD: "${MASKED_SECRET}"`);
+test('credential names in any case and identifier style are masked', () => {
+  const cases = [
+    ['API_TOKEN=abcd1234efgh', `API_TOKEN=${MASKED_SECRET}`],
+    ['DB_PASSWORD: "letmein-now"', `DB_PASSWORD: "${MASKED_SECRET}"`],
+    ['"password": "hunter2hunter2"', `"password": "${MASKED_SECRET}"`],
+    ['client_secret = "Hunter2Hunter2xx"', `client_secret = "${MASKED_SECRET}"`],
+    ['aws_secret_access_key = wJalrXUtnFEMIK7MDENG', `aws_secret_access_key = ${MASKED_SECRET}`],
+    ['"apiKey": "abcdefgh1234"', `"apiKey": "${MASKED_SECRET}"`],
+    ['clientSecret: abcdefgh1234', `clientSecret: ${MASKED_SECRET}`],
+    ['password := "abcdefgh1234"', `password := "${MASKED_SECRET}"`],
+    ["'auth_key' => 'abcdefgh1234'", `'auth_key' => '${MASKED_SECRET}'`],
+  ];
+  for (const [input, expected] of cases) assert.equal(maskSecretText(input), expected, input);
+});
+
+test('short values and names that merely contain a credential word mid-identifier are kept', () => {
   assert.equal(maskSecretText('AWS_SECRET_ACCESS_KEY=short'), 'AWS_SECRET_ACCESS_KEY=short', 'under 8 chars is not a credential value');
   assert.equal(maskSecretText('MAX_TOKENS = 4096'), 'MAX_TOKENS = 4096', 'a short numeric setting is kept');
+  assert.equal(maskSecretText('const keypadLayout = qwertyuiop;'), 'const keypadLayout = qwertyuiop;');
+});
+
+test('URL userinfo passwords and Basic auth are masked', () => {
+  assert.equal(maskSecretText('postgres://admin:S3cretPassw0rd@db:5432/x'), `postgres://admin:${MASKED_SECRET}@db:5432/x`);
+  assert.equal(maskSecretText('Authorization: Basic dXNlcjpwYXNzd29yZDEyMw=='), `Authorization: Basic ${MASKED_SECRET}`);
+  assert.equal(maskSecretText('see https://example.com/a:b/c'), 'see https://example.com/a:b/c', 'a URL with no userinfo is kept');
 });
 
 test('a high-entropy token is masked; a git sha and ordinary code are kept', () => {
@@ -73,6 +95,16 @@ test('file headers are never masked, even when they look like removed lines', ()
   assert.equal(lines[2], `--- a/${path}`);
   assert.equal(lines[3], `+++ b/${path}`);
   assert.equal(lines[5], `-x = "${MASKED_SECRET}"`);
+});
+
+test('the function context git appends to a hunk header is masked; the ranges are kept', () => {
+  const diff = [fileDiff('t.py', [`-TOKEN_X = '${GH_TOKEN}'`]), `@@ -16,6 +15,6 @@ TOKEN_X = '${GH_TOKEN}'`, '-    y = 1', '@@ -30 +29 @@', ' z'].join('\n');
+  const lines = maskRemovedSecrets(diff).split('\n');
+  assert.equal(lines[4], '@@ -1,4 +1,4 @@');
+  assert.equal(lines[6], `@@ -16,6 +15,6 @@ TOKEN_X = '${MASKED_SECRET}'`);
+  assert.equal(lines[7], '-    y = 1');
+  assert.equal(lines[8], '@@ -30 +29 @@', 'a header with no context is unchanged');
+  assert.ok(!lines.join('\n').includes(GH_TOKEN));
 });
 
 test('a removed line whose content starts with "--" is still content inside a hunk', () => {
