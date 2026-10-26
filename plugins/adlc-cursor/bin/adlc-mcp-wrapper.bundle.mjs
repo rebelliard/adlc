@@ -2074,8 +2074,20 @@ var BASE_STOPWORDS = Object.freeze(/* @__PURE__ */ new Set([
 ]));
 
 // packages/core/lib/diff-mask.mjs
-var ENV_ASSIGNMENT = /\b([A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PWD|CREDENTIALS?)[A-Z0-9_]*\s*[:=]\s*["']?)[^\s"']{8,}/g;
-var MASK_RULES = [...SECRET_PATTERNS.map(([pattern]) => new RegExp(pattern.source, `${pattern.flags}g`)), ENV_ASSIGNMENT];
+var MASKED_SECRET = "[redacted]";
+var NAME = String.raw`(?<![A-Za-z0-9])[A-Za-z0-9_.-]*?(?:secret|token|passw(?:or)?d|pwd|credentials?|api[-_]?key|access[-_]?key|private[-_]?key|auth[-_]?key)[A-Za-z0-9_.-]*["']?\s*(?::=|=>|[:=])\s*`;
+var ASSIGNMENT_RULES = [
+  // `name = "value with anything"` — the quoted value up to its closing quote.
+  [new RegExp(`(${NAME})(["'\`])((?:(?!\\2).){8,}?)\\2`, "gi"), (_m, prefix, quote) => `${prefix}${quote}${MASKED_SECRET}${quote}`],
+  // `name = value` — an unquoted value up to whitespace or a quote.
+  [new RegExp(`(${NAME})(?!["'\`])[^\\s"'\`]{8,}`, "gi"), (_m, prefix) => `${prefix}${MASKED_SECRET}`],
+  // `scheme://user:password@host` — the password in URL userinfo.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]*:)[^\s@/]+(?=@)/gi, (_m, prefix) => `${prefix}${MASKED_SECRET}`],
+  // `Authorization: Basic <base64 user:pass>`.
+  [/(\bBasic\s+)[A-Za-z0-9+/]{8,}={0,2}/g, (_m, prefix) => `${prefix}${MASKED_SECRET}`]
+];
+var SHAPE_RULES = SECRET_PATTERNS.filter(([, what]) => what !== "an inline credential assignment").map(([pattern]) => [new RegExp(pattern.source, `${pattern.flags}g`), () => MASKED_SECRET]);
+var MASK_RULES = [...ASSIGNMENT_RULES, ...SHAPE_RULES];
 
 // plugins/adlc-cursor/generated-active-ticket.mjs
 import { lstatSync as lstatSync7, openSync as openSync4, fstatSync, readSync as readSync2, closeSync as closeSync4, constants as fsConstants2 } from "node:fs";
